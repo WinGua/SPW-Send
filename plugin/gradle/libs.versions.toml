@@ -1,0 +1,6 @@
+[versions]
+kotlin = "2.4.20"
+spw-workshop-api = "0.1.0-dev22"
+
+[libraries]
+spw-workshop-api = { group = "com.github.Moriafly", name = "spw-workshop-api", version.ref = "spw-workshop-api" }

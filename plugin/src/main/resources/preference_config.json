@@ -1,0 +1,17 @@
+{
+  "configs": [
+    {
+      "title": "SPW-Send",
+      "config": "config.json",
+      "preferences": [
+        {
+          "type": "button",
+          "title": "打开同步面板",
+          "summary": "选择源目录、连接手机、对比并同步",
+          "arrow_type": "none",
+          "on_click": "com.wingua.spwsend.SendPlugin.openPanel"
+        }
+      ]
+    }
+  ]
+}
