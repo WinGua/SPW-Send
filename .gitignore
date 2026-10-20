@@ -1,0 +1,26 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# Gradle / JVM（plugin）
+.gradle/
+local.properties
+*.spmod
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 密钥 / 本地配置
+*.jks
+*.keystore
+key.properties
