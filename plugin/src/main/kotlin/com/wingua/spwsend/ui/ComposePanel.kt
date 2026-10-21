@@ -70,17 +70,19 @@ import com.moriafly.salt.ui.Card as SaltCard
 import com.moriafly.salt.ui.ControlSize
 import com.moriafly.salt.ui.SaltColors
 import com.moriafly.salt.ui.SaltConfigs
+import com.moriafly.salt.ui.SaltDynamicColors
 import com.moriafly.salt.ui.SaltTheme
 import com.moriafly.salt.ui.Text as SaltText
-import com.moriafly.salt.ui.material.MaterialType
+import com.moriafly.salt.ui.screen.BasicScreen
 import com.wingua.spwsend.core.Mapping
 import com.wingua.spwsend.core.PathUtil
 
 /**
- * 宿主导航根组件之后追加的全屏面板。
+ * 宿主导航根组件之后追加的全屏页面。
  *
- * 面板使用随 .spmod 打包的 SaltUI 组件，跟随宿主的字体与深浅色设置；
- * 内容层接管成功时根背景透明，让窗口的 DWM 云母 / 亚克力透出。
+ * 页面沿用宿主的标题栏样式（56dp 返回按钮行）与配色：
+ * 材质样式下根背景透明，让窗口的 DWM 云母 / 亚克力直接透出；
+ * 无法接管内容层时退回与宿主经典主题一致的实色页面。
  * 不创建任何 AWT 窗口。
  */
 @Composable
@@ -89,6 +91,11 @@ fun SendOverlay() {
     val appearance = remember { HostAppearanceReader.read() }
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
+    val materialActive = SendPanelState.materialBridgeAvailable &&
+        appearance.windowStyle in MATERIAL_WINDOW_STYLES
+    val palette = remember(appearance.windowStyle, dark, materialActive) {
+        hostPalette(appearance.windowStyle, dark, materialActive)
+    }
     val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
         HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
     }
@@ -101,25 +108,20 @@ fun SendOverlay() {
     )
     SaltTheme(
         configs = SaltConfigs.default(dark),
+        dynamicColors = SaltDynamicColors(light = palette, dark = palette),
         textStyles = textStyles
     ) {
-        // 内容层接管成功时根背景透明，让窗口的 DWM 云母 / 亚克力直接透出；
-        // 接管失败时退回主题底色，避免透明页露出宿主内容。
-        val background = if (SendPanelState.materialBridgeAvailable) {
-            Color.Transparent
-        } else {
-            SaltTheme.colors.background
-        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(background)
+                .background(if (materialActive) Color.Transparent else palette.background)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) { }
         ) {
             SendPanel()
+            DialogLayer()
         }
     }
 }
@@ -144,11 +146,20 @@ private fun SendPanel() {
             .focusRequester(focusRequester)
             .focusable()
     ) {
-        if (maxWidth >= 860.dp) {
-            Column(Modifier.fillMaxSize().padding(20.dp)) {
-                Header()
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.fillMaxWidth().weight(1f)) {
+        BasicScreen(
+            onBack = { SendController.requestClose() },
+            modifier = Modifier.fillMaxSize(),
+            title = "SPW-Send",
+            subtitle = "电脑 → 手机 · 只同步新增文件",
+            toolButtons = { StatusIndicator() }
+        ) { padding ->
+            if (maxWidth >= 860.dp) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                ) {
                     Column(Modifier.width(320.dp).fillMaxHeight()) {
                         LocalInfoPanelCard()
                         Spacer(Modifier.height(12.dp))
@@ -167,90 +178,64 @@ private fun SendPanel() {
                         LogSection(Modifier.fillMaxWidth().height(142.dp))
                     }
                 }
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp)
-            ) {
-                Header()
-                Spacer(Modifier.height(12.dp))
-                LocalInfoPanelCard()
-                Spacer(Modifier.height(12.dp))
-                SectionLabel("手机设备")
-                Spacer(Modifier.height(6.dp))
-                DeviceSection(Modifier.fillMaxWidth().height(240.dp))
-                Spacer(Modifier.height(12.dp))
-                MappingSection(Modifier.fillMaxWidth().height(230.dp))
-                Spacer(Modifier.height(12.dp))
-                SyncSection()
-                Spacer(Modifier.height(12.dp))
-                ResultSection(Modifier.fillMaxWidth().height(300.dp))
-                Spacer(Modifier.height(12.dp))
-                LogSection(Modifier.fillMaxWidth())
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
+                    LocalInfoPanelCard()
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("手机设备")
+                    Spacer(Modifier.height(6.dp))
+                    DeviceSection(Modifier.fillMaxWidth().height(240.dp))
+                    Spacer(Modifier.height(12.dp))
+                    MappingSection(Modifier.fillMaxWidth().height(230.dp))
+                    Spacer(Modifier.height(12.dp))
+                    SyncSection()
+                    Spacer(Modifier.height(12.dp))
+                    ResultSection(Modifier.fillMaxWidth().height(300.dp))
+                    Spacer(Modifier.height(12.dp))
+                    LogSection(Modifier.fillMaxWidth())
+                }
             }
         }
-        DialogLayer()
     }
 }
 
+/** 标题栏右侧的连接状态，沿用宿主的次文本样式。 */
 @Composable
-private fun Header() {
-    val success = successColor()
-    val warning = warningColor()
-    val error = errorColor()
-    val running = SendController.serviceRunning
+private fun StatusIndicator() {
     val statusColor = when {
-        SendController.startupError != null -> error
-        SendController.syncActive || SendController.compareActive -> warning
-        running -> success
-        else -> error
+        SendController.startupError != null -> errorColor()
+        SendController.syncActive || SendController.compareActive -> warningColor()
+        SendController.serviceRunning -> successColor()
+        else -> errorColor()
     }
     val statusText = when {
         SendController.startupError != null -> "服务未启动"
-        SendController.syncActive -> "同步中 · 端口 ${SendController.port}"
-        SendController.compareActive -> "对比中 · 端口 ${SendController.port}"
-        running -> "服务在线 · 端口 ${SendController.port}"
+        SendController.syncActive -> "同步中 · ${SendController.port}"
+        SendController.compareActive -> "对比中 · ${SendController.port}"
+        SendController.serviceRunning -> "服务在线 · ${SendController.port}"
         else -> "服务未启动"
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            PanelText("SPW-Send", style = PanelLargeTitle, color = panelColors.text)
-            Spacer(Modifier.height(4.dp))
-            PanelText(
-                "电脑 → 手机 · 只同步新增文件",
-                style = PanelSub,
-                color = panelColors.subText
-            )
-        }
-        Column(horizontalAlignment = Alignment.End) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
-                Spacer(Modifier.width(6.dp))
-                PanelText(statusText, style = PanelSub, color = statusColor)
-            }
-            Spacer(Modifier.height(8.dp))
-            PanelButton(
-                onClick = { SendController.requestClose() },
-                text = "关闭",
-                type = PanelButtonType.Sub
-            )
-        }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
+        Spacer(Modifier.width(6.dp))
+        PanelText(statusText, style = PanelSub, color = statusColor)
     }
 }
 
 @Composable
 private fun LocalInfoPanelCard() {
     val appearance = remember { HostAppearanceReader.read() }
-    val materialType = SaltTheme.material.type
+    val materialActive = SendPanelState.materialBridgeAvailable &&
+        appearance.windowStyle in MATERIAL_WINDOW_STYLES
     val materialLabel = buildString {
         append(appearance.windowStyle ?: "未知")
-        if (materialType != MaterialType.None) {
-            append(" · ").append(materialType.name)
-        }
-        append(if (SendPanelState.materialBridgeAvailable) " · 已接管" else " · 回退")
+        append(if (materialActive) " · 已接管" else " · 回退")
     }
     PanelCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -893,12 +878,6 @@ private fun PanelText(
         overflow = overflow
     )
 }
-
-private val PanelLargeTitle = TextStyle(
-    fontSize = 20.sp,
-    lineHeight = 26.sp,
-    fontWeight = FontWeight.Bold
-)
 
 private val PanelMain = TextStyle(
     fontSize = 14.sp,
