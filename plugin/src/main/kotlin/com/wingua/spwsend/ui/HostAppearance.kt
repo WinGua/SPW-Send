@@ -8,19 +8,7 @@ data class HostAppearance(
     val windowStyle: String? = null,
     val fontStrategy: String? = null,
     val customFontFilePath: String? = null,
-) {
-    /** 当前窗口样式是否由宿主窗口的 DWM 材质绘制背景。 */
-    val materialWindow: Boolean
-        get() = windowStyle in MATERIAL_WINDOW_STYLES
-
-    companion object {
-        val MATERIAL_WINDOW_STYLES = setOf(
-            "WindowsAcrylic",
-            "WindowsMica",
-            "WindowsMicaAlt",
-        )
-    }
-}
+)
 
 /**
  * 通过反射读取椒盐音乐 `AppConfig`，避免编译期依赖宿主内部类。

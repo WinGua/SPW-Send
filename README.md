@@ -55,7 +55,7 @@ cd plugin && gradle plugin
 
 ## 技术栈
 
-- **模组**：Kotlin / JVM、PF4J、Compose Foundation 自绘（宿主内嵌界面），通过 Salt Player Workshop API 加载
+- **模组**：Kotlin / JVM、PF4J、SaltUI 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载
 - **Android 端**：MySend（Flutter）
 - **传输**：UDP 广播发现 + 局域网 HTTP，明文，仅建议在可信网络内使用
 
