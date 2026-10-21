@@ -1,0 +1,77 @@
+name: android
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'analysis_options.yaml'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      - name: 静态分析（提示不阻断，编译错误交给构建阶段暴露）
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
+
+      - name: 生成 local.properties
+        run: |
+          FLUTTER_SDK="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
+          echo "flutter.sdk=$FLUTTER_SDK" > android/local.properties
+          echo "sdk.dir=$ANDROID_HOME" >> android/local.properties
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: 生成 Gradle Wrapper
+        working-directory: android
+        run: gradle wrapper --gradle-version 8.7
+
+      - name: 还原签名密钥
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p keystore
+            echo "$KEYSTORE_B64" | base64 -d > keystore/spw-send-release.keystore
+          fi
+
+      - name: 构建 APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: flutter build apk --release
+
+      - name: 重命名产物
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/SPW-Send.apk
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: spw-send-android
+          path: dist/SPW-Send.apk
+          if-no-files-found: error

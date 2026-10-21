@@ -1,7 +1,7 @@
 # SPW-Send 同步协议 v2
 
 状态：已定稿，实现中  
-适用范围：SPW-Send 模组（PC）↔ SPW-Send Android 接收端  
+适用范围：SPW-Send 模组（PC）↔ SPW-Send Android 端  
 兼容性：与 MySend 协议 v1 **不兼容**，但可与 MySend 在同一局域网共存
 
 ---
@@ -40,7 +40,7 @@ HTTP 端口被占用时允许改用其他端口，但必须在 `hello` 中声明
 | 角色 | `role` | 持有 |
 | --- | --- | --- |
 | PC（模组） | `pc` | 源文件、源目录映射 |
-| Android（接收端） | `android` | 目标目录映射 |
+| Android | `android` | 目标目录映射 |
 
 两端都必须实现：`/v2/hello`、`/v2/pair`、`/v2/index`、`/v2/log`、`/v2/disconnect`
 
@@ -134,9 +134,13 @@ Content-Type: application/json
   "role": "pc",
   "app": "spw-send-mod",
   "appVersion": "0.1.0",
-  "proto": 2
+  "proto": 2,
+  "token": "c81d..."
 }
 ```
+
+`token` 可选：主动配对方附上自己签发的会话 token，供被连接方在本次会话中反向调用。
+两端都可以主动发起 `/v2/pair`；配对成功后双方各持有可调用对方的 token。
 
 `200`：
 
@@ -339,7 +343,24 @@ POST /v2/disconnect
 
 ---
 
-## 16. 与 MySend v1 的差异
+## 16. 双向发起
+
+文件方向固定为 PC → Android，但**对比与同步可以由任一端发起**：
+
+| 发起方 | 对比方式 | 同步方式 |
+| --- | --- | --- |
+| PC | 扫描本地源目录 + 调 Android `/v2/index` | 逐文件 `POST /v2/upload` 推送 |
+| Android | 调 PC `/v2/index` 取源索引 + 扫描本地目标目录 | 逐文件 `GET /v2/file` 拉取（支持 Range 续传） |
+
+- 发起方必须先完成 `/v2/pair`，并在后续请求携带有效 token
+- Android 主动配对时在请求体附带自己签发的 `token`，PC 据此可直接反向调用 Android
+- Android 由 PC 发起配对时，可在需要对比/同步前再调用一次 `/v2/pair` 获取调用 PC 的 token
+- 任一方向完成后都由发起方 `POST /v2/log` 给对端留存日志
+- 同一时间同一设备只允许一个同步任务；服务端以 `409 BUSY` 拒绝并发上传/配对
+
+---
+
+## 17. 与 MySend v1 的差异
 
 | 项目 | v1 | v2 |
 | --- | --- | --- |
