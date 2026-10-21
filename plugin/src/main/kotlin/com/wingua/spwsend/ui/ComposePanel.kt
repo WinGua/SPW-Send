@@ -146,6 +146,8 @@ private fun SendPanel() {
             .focusRequester(focusRequester)
             .focusable()
     ) {
+        // 在 BoxWithConstraints 作用域内先取值，避免进入 BasicScreen 的 BoxScope 后无法访问。
+        val wide = maxWidth >= 860.dp
         BasicScreen(
             onBack = { SendController.requestClose() },
             modifier = Modifier.fillMaxSize(),
@@ -153,7 +155,7 @@ private fun SendPanel() {
             subtitle = "电脑 → 手机 · 只同步新增文件",
             toolButtons = { StatusIndicator() }
         ) { padding ->
-            if (maxWidth >= 860.dp) {
+            if (wide) {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
