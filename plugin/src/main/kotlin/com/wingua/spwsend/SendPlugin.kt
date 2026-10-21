@@ -2,6 +2,7 @@
 
 package com.wingua.spwsend
 
+import com.wingua.spwsend.ui.AppearanceSettings
 import com.wingua.spwsend.ui.SendController
 import com.wingua.spwsend.ui.SendOverlay
 import com.wingua.spwsend.ui.SendPanelState
@@ -11,15 +12,16 @@ import com.xuncorp.spw.workshop.api.PluginPermission
 import com.xuncorp.spw.workshop.api.SpwPlugin
 import com.xuncorp.spw.workshop.api.UnstableSpwWorkshopApi
 import com.xuncorp.spw.workshop.api.WorkshopApi
+import com.xuncorp.spw.workshop.api.config.ConfigHelper
 import java.awt.event.KeyEvent
+import java.util.function.Consumer
 import javax.swing.SwingUtilities
 
 /**
  * SPW-Send 椒盐音乐模组入口。
  *
  * 通过配置页按钮或快捷键（Ctrl+Alt+S）打开 / 关闭同步面板；
- * 面板以 Compose 自绘内嵌在宿主内容区，不创建独立窗口。
- * 面板打开时暂时隐藏宿主内容层，让窗口的 DWM 材质直接透出。
+ * 面板通过 `afterComposable` 追加在宿主内容区，不接管宿主导航。
  */
 class SendPlugin(
     pluginContext: PluginContext
@@ -29,12 +31,26 @@ class SendPlugin(
 
     private var injectionWarningShown = false
 
+    private var appearanceListenerAttached = false
+
+    private val configManager by lazy { WorkshopApi.manager.createConfigManager() }
+
+    private val appearanceListener = Consumer<ConfigHelper> { config ->
+        val value = config.get(KEY_BACKGROUND_STYLE, "auto")
+        SwingUtilities.invokeLater { AppearanceSettings.apply(value) }
+    }
+
     override fun start() {
+        applyAppearanceConfig()
         registerShortcut()
         registerPanelHooks()
     }
 
     override fun stop() {
+        if (appearanceListenerAttached) {
+            runCatching { configManager.removeConfigChangeListener(appearanceListener) }
+            appearanceListenerAttached = false
+        }
         runCatching {
             WorkshopApi.manager.keyBindingManager.unregister(actionId = ACTION_OPEN_PANEL)
         }
@@ -42,6 +58,17 @@ class SendPlugin(
         SwingUtilities.invokeLater {
             SendPanelState.close()
             SendController.shutdown()
+        }
+    }
+
+    /** 读取「背景外观」设置并监听配置页的修改。 */
+    private fun applyAppearanceConfig() {
+        runCatching {
+            AppearanceSettings.apply(configManager.getConfig().get(KEY_BACKGROUND_STYLE, "auto"))
+            if (!appearanceListenerAttached) {
+                configManager.addConfigChangeListener(appearanceListener)
+                appearanceListenerAttached = true
+            }
         }
     }
 
@@ -102,6 +129,7 @@ class SendPlugin(
 
     companion object {
         private const val ACTION_OPEN_PANEL = "spw-send-open-panel"
+        private const val KEY_BACKGROUND_STYLE = "background.style"
         private const val TARGET_CLASS = "com.xuncorp.voxzen.ui.navigation.AppNavigationKt"
         private const val TARGET_METHOD = "AppNavigation"
         private const val TARGET_CALLER = "androidx.compose.ui.ۄ"

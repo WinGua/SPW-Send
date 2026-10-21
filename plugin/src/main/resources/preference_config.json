@@ -5,6 +5,15 @@
       "config": "config.json",
       "preferences": [
         {
+          "type": "list",
+          "key": "background.style",
+          "title": "背景外观",
+          "summary": "选择面板背景的纹理与配色",
+          "entries": ["跟随宿主", "云母", "亚克力", "云母 Alt", "经典纯色", "微光渐变"],
+          "entry_values": ["auto", "mica", "acrylic", "micaAlt", "classic", "gradient"],
+          "default_value": "auto"
+        },
+        {
           "type": "button",
           "title": "打开同步面板",
           "summary": "选择源目录、连接手机、对比并同步",

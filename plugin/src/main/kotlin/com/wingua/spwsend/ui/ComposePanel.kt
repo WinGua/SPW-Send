@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -47,16 +48,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -90,8 +95,17 @@ fun SendOverlay() {
     val appearance = remember { HostAppearanceReader.read() }
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
-    val palette = remember(appearance.windowStyle, dark) {
-        hostPalette(appearance.windowStyle, dark)
+    val style = AppearanceSettings.backgroundStyle
+    val windowStyle = BackgroundStyle.resolveWindowStyle(style, appearance.windowStyle)
+    val materialStyle = windowStyle in MATERIAL_WINDOW_STYLES
+    val wallpaper = remember(materialStyle) {
+        if (materialStyle) Wallpaper.load() else null
+    }
+    val useGradient = style == BackgroundStyle.Gradient ||
+        (style == BackgroundStyle.Auto && windowStyle == null)
+    val glass = materialStyle || useGradient
+    val palette = remember(windowStyle, dark, glass) {
+        hostPalette(windowStyle, dark, glass)
     }
     val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
         HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
@@ -111,16 +125,81 @@ fun SendOverlay() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(palette.background)
+                .background(Color.Transparent)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) { }
         ) {
+            BackgroundLayer(
+                windowStyle = windowStyle,
+                materialStyle = materialStyle,
+                useGradient = useGradient,
+                dark = dark,
+                wallpaper = wallpaper,
+                solidColor = palette.background
+            )
             SendPanel()
             DialogLayer()
         }
     }
+}
+
+/**
+ * 页面背景：优先壁纸模糊（近似云母 / 亚克力），其次渐变，最后实色。
+ */
+@Composable
+private fun BackgroundLayer(
+    windowStyle: String?,
+    materialStyle: Boolean,
+    useGradient: Boolean,
+    dark: Boolean,
+    wallpaper: ImageBitmap?,
+    solidColor: Color
+) {
+    val acrylic = windowStyle == "WindowsAcrylic"
+    Box(Modifier.fillMaxSize()) {
+        when {
+            wallpaper != null -> {
+                Image(
+                    bitmap = wallpaper,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(radius = if (acrylic) 96.dp else 56.dp)
+                )
+                Box(Modifier.fillMaxSize().background(materialTint(acrylic, dark)))
+            }
+
+            materialStyle || useGradient -> GradientBackground(dark)
+
+            else -> Box(Modifier.fillMaxSize().background(solidColor))
+        }
+    }
+}
+
+/** 壁纸上的材质色调层，让模糊壁纸接近云母 / 亚克力的观感。 */
+private fun materialTint(acrylic: Boolean, dark: Boolean): Color = when {
+    acrylic -> if (dark) {
+        Color(0xFF15171C).copy(alpha = 0.62f)
+    } else {
+        Color(0xFFE8EAEF).copy(alpha = 0.62f)
+    }
+
+    dark -> Color(0xFF1B1B20).copy(alpha = 0.70f)
+
+    else -> Color(0xFFF5F5F8).copy(alpha = 0.74f)
+}
+
+@Composable
+private fun GradientBackground(dark: Boolean) {
+    val colors = if (dark) {
+        listOf(Color(0xFF2B2B31), Color(0xFF1E1E22))
+    } else {
+        listOf(Color(0xFFF9F9FC), Color(0xFFEDEDF3))
+    }
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(colors)))
 }
 
 @Composable

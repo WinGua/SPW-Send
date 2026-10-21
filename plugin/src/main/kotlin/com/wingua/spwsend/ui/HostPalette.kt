@@ -13,11 +13,32 @@ internal val MATERIAL_WINDOW_STYLES = setOf(
 /**
  * 按宿主窗口样式还原配色。
  *
- * 面板不接管宿主导航、也不竞争窗口材质，因此这里用取样值做出与宿主一致的实色近似：
- * 经典主题用经典页面色，亚克力 / 云母 / 云母 Alt 用对应材质的聚焦底色与卡片色。
+ * [glass] 为 true 时用于壁纸 / 渐变背景：卡片与分隔线使用半透明叠加，
+ * 文字保持足够对比度；否则使用与宿主一致的实色近似。
  */
-internal fun hostPalette(windowStyle: String?, dark: Boolean): SaltColors {
+internal fun hostPalette(windowStyle: String?, dark: Boolean, glass: Boolean): SaltColors {
     val base = if (dark) SaltColors.defaultDark() else SaltColors.defaultLight()
+    if (glass) {
+        return if (dark) {
+            base.copy(
+                background = Color(0xFF202024),
+                subBackground = Color.White.copy(alpha = 0.10f),
+                popup = Color(0xFF2A2A2A),
+                text = Color(0xFFEBEEF1),
+                subText = Color(0xFFCCD0D5),
+                stroke = Color.White.copy(alpha = 0.16f)
+            )
+        } else {
+            base.copy(
+                background = Color(0xFFF5F5F7),
+                subBackground = Color.White.copy(alpha = 0.60f),
+                popup = Color(0xFFFCFCFC),
+                text = Color(0xFF25272B),
+                subText = Color(0xFF5F636B),
+                stroke = Color.Black.copy(alpha = 0.10f)
+            )
+        }
+    }
     if (windowStyle !in MATERIAL_WINDOW_STYLES) {
         return base.copy(
             background = if (dark) Color(0xFF232323) else Color(0xFFF8F8F8),
