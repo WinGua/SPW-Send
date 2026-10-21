@@ -99,8 +99,6 @@ class ConfigStore {
         }
     }
 
-    fun configFile(): File = file
-
     private fun defaultDeviceName(): String {
         val user = System.getProperty("user.name") ?: "PC"
         return "$user 的电脑"

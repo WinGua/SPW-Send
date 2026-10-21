@@ -21,11 +21,4 @@ object SendPanelState {
     fun close() {
         visible = false
     }
-
-    /** 返回键 / ESC 是否已消费本次事件。 */
-    fun consumeBack(): Boolean {
-        if (!visible) return false
-        close()
-        return true
-    }
 }

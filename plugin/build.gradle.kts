@@ -36,7 +36,6 @@ dependencies {
     compileOnly("org.jetbrains.compose.foundation:foundation:1.12.0")
     compileOnly("org.jetbrains.compose.ui:ui:1.12.0")
     compileOnly("org.jetbrains.compose.animation:animation:1.12.0")
-    compileOnly("dev.chrisbanes.haze:haze-jvm:2.0.1")
 
     implementation("io.github.moriafly:salt-ui-desktop:3.0.0-beta02") {
         isTransitive = false

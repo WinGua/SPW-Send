@@ -22,10 +22,7 @@ class Peer(
     @Volatile var appVersion: String,
     @Volatile var session: String,
     @Volatile var lastSeen: Long
-) {
-    @Volatile
-    var connected: Boolean = false
-}
+)
 
 /**
  * UDP 局域网发现（协议 v2）。
@@ -91,24 +88,12 @@ class Discovery(
         return peers.values.sortedBy { it.name.lowercase() }
     }
 
-    fun peer(id: String): Peer? = peers[id]
-
     fun markConnected(id: String) {
-        peers[id]?.let {
-            it.connected = true
-            onChanged()
-        }
+        if (peers.containsKey(id)) onChanged()
     }
 
     fun markDisconnected(id: String) {
-        peers[id]?.let {
-            it.connected = false
-            onChanged()
-        }
-    }
-
-    fun remove(id: String) {
-        if (peers.remove(id) != null) onChanged()
+        if (peers.containsKey(id)) onChanged()
     }
 
     private fun prune() {
@@ -170,7 +155,6 @@ class Discovery(
             if (sessionChanged) {
                 existing.session = peerSession
                 // 对端重启后旧 token 失效。
-                existing.connected = false
                 onPeerSessionChanged(id)
                 onChanged()
             }

@@ -73,14 +73,13 @@ import com.moriafly.salt.ui.SaltConfigs
 import com.moriafly.salt.ui.SaltTheme
 import com.moriafly.salt.ui.Text as SaltText
 import com.moriafly.salt.ui.material.MaterialType
-import com.moriafly.salt.ui.material.material
 import com.wingua.spwsend.core.Mapping
 import com.wingua.spwsend.core.PathUtil
 
 /**
  * 宿主导航根组件之后追加的全屏面板。
  *
- * 面板使用随 .spmod 打包的 SaltUI 组件，继承宿主的主题、字体与材质设置；
+ * 面板使用随 .spmod 打包的 SaltUI 组件，跟随宿主的字体与深浅色设置；
  * 内容层接管成功时根背景透明，让窗口的 DWM 云母 / 亚克力透出。
  * 不创建任何 AWT 窗口。
  */
@@ -104,23 +103,17 @@ fun SendOverlay() {
         configs = SaltConfigs.default(dark),
         textStyles = textStyles
     ) {
-        // 宿主提供 SaltUI 材质时优先使用其 Acrylic / Mica 层；
-        // 否则在内容层已接管时保持透明，让窗口的 DWM 材质透出。
-        val materialType = SaltTheme.material.type
-        val fallback = if (SendPanelState.materialBridgeAvailable) {
+        // 内容层接管成功时根背景透明，让窗口的 DWM 云母 / 亚克力直接透出；
+        // 接管失败时退回主题底色，避免透明页露出宿主内容。
+        val background = if (SendPanelState.materialBridgeAvailable) {
             Color.Transparent
         } else {
             SaltTheme.colors.background
         }
-        val pageBackground = if (materialType != MaterialType.None) {
-            Modifier.material(fallback = fallback)
-        } else {
-            Modifier.background(fallback)
-        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .then(pageBackground)
+                .background(background)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null

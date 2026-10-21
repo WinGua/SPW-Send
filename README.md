@@ -19,7 +19,7 @@
 **模组端功能已实现，构建走 GitHub Actions。**
 
 - 协议以 MySend v2 为基准：[docs/PROTOCOL.md](docs/PROTOCOL.md)
-- 模组端：UDP 发现、HTTP 服务、目录对比、分片续传推送、Compose 自绘内嵌面板
+- 模组端：UDP 发现、HTTP 服务、目录对比、分片续传推送、SaltUI 内嵌面板
 - 云端构建：`plugin` 工作流产出 `.spmod`，`release` 工作流在打 tag 时发布 Release
 
 ## 构建

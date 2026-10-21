@@ -1,9 +1,7 @@
 package com.wingua.spwsend.core
 
 import java.io.File
-import java.io.RandomAccessFile
 import java.nio.file.Files
-import java.security.MessageDigest
 import java.util.Locale
 
 /** 源目录中的文件条目。 */
@@ -94,20 +92,6 @@ object PathUtil {
             }
         result.sortBy { it.relativePath }
         return result
-    }
-
-    /** 计算文件 SHA-256 小写十六进制摘要。 */
-    fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        RandomAccessFile(file, "r").use { raf ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val read = raf.read(buffer)
-                if (read <= 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { String.format(Locale.ROOT, "%02x", it) }
     }
 
     /** 人类可读的字节数。 */

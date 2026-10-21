@@ -268,10 +268,3 @@ fun Map<String, Any?>.longValue(key: String): Long = when (val v = this[key]) {
 }
 
 fun Map<String, Any?>.intValue(key: String): Int = longValue(key).toInt()
-
-fun Map<String, Any?>.boolValue(key: String): Boolean = when (val v = this[key]) {
-    is Boolean -> v
-    is Number -> v.toInt() != 0
-    is String -> v.equals("true", ignoreCase = true)
-    else -> false
-}

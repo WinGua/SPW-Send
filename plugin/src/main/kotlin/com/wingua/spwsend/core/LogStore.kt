@@ -67,12 +67,6 @@ class LogStore {
         return entries.take(limit).toList()
     }
 
-    @Synchronized
-    fun all(): List<SyncLog> {
-        prune()
-        return entries.toList()
-    }
-
     private fun load() {
         if (!file.exists()) return
         runCatching {
