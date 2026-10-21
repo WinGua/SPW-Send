@@ -14,6 +14,14 @@ object SendPanelState {
     var materialBridgeAvailable by mutableStateOf(false)
         internal set
 
+    /** 内容层替换 hook 是否注册成功。 */
+    var materialHookRegistered by mutableStateOf(false)
+        internal set
+
+    /** 内容层替换 hook 注册失败的原因。 */
+    var materialHookError by mutableStateOf<String?>(null)
+        internal set
+
     fun open() {
         visible = true
     }

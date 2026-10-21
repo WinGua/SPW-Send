@@ -108,7 +108,10 @@ class SendPlugin(
             ) { _ ->
                 HostMaterialLayer()
             }
+        }.onFailure {
+            SendPanelState.materialHookError = it.message ?: it::class.java.simpleName
         }.getOrNull()
+        SendPanelState.materialHookRegistered = materialHook != null
     }
 
     private fun closeHooks() {
@@ -117,6 +120,8 @@ class SendPlugin(
         materialHook = null
         panelHook = null
         SendPanelState.materialBridgeAvailable = false
+        SendPanelState.materialHookRegistered = false
+        SendPanelState.materialHookError = null
     }
 
     companion object {

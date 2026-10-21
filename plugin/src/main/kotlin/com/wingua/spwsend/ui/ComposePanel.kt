@@ -233,11 +233,23 @@ private fun StatusIndicator() {
 @Composable
 private fun LocalInfoPanelCard() {
     val appearance = remember { HostAppearanceReader.read() }
-    val materialActive = SendPanelState.materialBridgeAvailable &&
-        appearance.windowStyle in MATERIAL_WINDOW_STYLES
     val materialLabel = buildString {
         append(appearance.windowStyle ?: "未知")
-        append(if (materialActive) " · 已接管" else " · 回退")
+        when {
+            SendPanelState.materialBridgeAvailable &&
+                appearance.windowStyle in MATERIAL_WINDOW_STYLES -> append(" · 已接管")
+
+            SendPanelState.materialBridgeAvailable -> append(" · 经典样式")
+
+            !SendPanelState.materialHookRegistered -> {
+                append(" · 接管注册失败")
+                SendPanelState.materialHookError?.let { error ->
+                    append("（").append(error.take(40)).append("）")
+                }
+            }
+
+            else -> append(" · 未组合")
+        }
     }
     PanelCard(modifier = Modifier.fillMaxWidth()) {
         Column(
