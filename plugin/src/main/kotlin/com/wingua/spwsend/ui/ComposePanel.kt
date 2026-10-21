@@ -71,8 +71,9 @@ import com.wingua.spwsend.core.PathUtil
 /**
  * 宿主导航根组件之后追加的全屏面板。
  *
- * 宿主插件类加载器不暴露 SaltUI，这里全部使用 Compose Foundation 自绘，
- * 不创建任何 AWT 窗口，也不依赖宿主内部主题类。
+ * 宿主插件类加载器不暴露 SaltUI，这里全部使用 Compose Foundation 自绘；
+ * 深浅色、窗口材质与字体通过反射读取，读取失败时回退默认外观。
+ * 不创建任何 AWT 窗口。
  */
 @Composable
 fun SendOverlay() {
@@ -80,13 +81,23 @@ fun SendOverlay() {
     val appearance = remember { HostAppearanceReader.read() }
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
+    // 只有在成功替换宿主内容层、且宿主使用 DWM 材质时才使用透明背景；
+    // 追加式覆盖层仍保留不透明底色，避免透出宿主界面。
+    val material = SendPanelState.materialBridgeAvailable && appearance.materialWindow
+    val colors = remember(dark, appearance.windowStyle, material) {
+        panelColorsFor(dark, appearance.windowStyle, material)
+    }
+    val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
+        HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
+    }
     CompositionLocalProvider(
-        LocalPanelColors provides if (dark) DarkPanelColors else LightPanelColors
+        LocalPanelColors provides colors,
+        LocalHostFontFamily provides hostFont
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(panelColors.background)
+                .background(colors.background)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
@@ -725,7 +736,7 @@ private fun NameInputPanelCard(input: NameInput) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(panelColors.background)
+                    .background(panelColors.controlBackground)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -736,7 +747,10 @@ private fun NameInputPanelCard(input: NameInput) {
                     value = input.value,
                     onValueChange = { SendController.updateNameInput(it) },
                     singleLine = true,
-                    textStyle = PanelMain.copy(color = panelColors.text),
+                    textStyle = PanelMain.copy(
+                        color = panelColors.text,
+                        fontFamily = LocalHostFontFamily.current
+                    ),
                     cursorBrush = SolidColor(panelColors.highlight),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -816,7 +830,7 @@ private fun PanelButton(
     val shape = RoundedCornerShape(9.dp)
     val fill = when (type) {
         PanelButtonType.Highlight -> colors.highlight
-        PanelButtonType.Sub -> colors.background
+        PanelButtonType.Sub -> colors.controlBackground
         PanelButtonType.Danger -> colors.error.copy(alpha = 0.16f)
     }
     val contentColor = when (type) {
@@ -865,7 +879,8 @@ private fun PanelText(
         modifier = modifier,
         style = style.copy(
             color = resolvedColor,
-            fontWeight = fontWeight ?: style.fontWeight
+            fontWeight = fontWeight ?: style.fontWeight,
+            fontFamily = LocalHostFontFamily.current
         ),
         maxLines = maxLines,
         overflow = overflow
@@ -889,12 +904,12 @@ private val PanelSub = TextStyle(
 )
 
 private data class PanelColors(
-    val dark: Boolean,
     val highlight: Color,
     val text: Color,
     val subText: Color,
     val background: Color,
     val subBackground: Color,
+    val controlBackground: Color,
     val popup: Color,
     val stroke: Color,
     val onHighlight: Color,
@@ -904,12 +919,12 @@ private data class PanelColors(
 )
 
 private val LightPanelColors = PanelColors(
-    dark = false,
     highlight = Color(0xFF0470E6),
     text = Color(0xFF1E1715),
     subText = Color(0xFF8C8C8C),
     background = Color(0xFFF7F9FA),
     subBackground = Color(0xFFFFFFFF),
+    controlBackground = Color(0xFFF7F9FA),
     popup = Color(0xFFFFFFFF),
     stroke = Color(0xFF8C8C8C).copy(alpha = 0.15f),
     onHighlight = Color.White,
@@ -919,12 +934,12 @@ private val LightPanelColors = PanelColors(
 )
 
 private val DarkPanelColors = PanelColors(
-    dark = true,
     highlight = Color(0xFF0088FF),
     text = Color(0xFFEBEEF1),
     subText = Color(0xBFE1E6EB),
     background = Color(0xFF0C0C0C),
     subBackground = Color(0xFF191919),
+    controlBackground = Color(0xFF0C0C0C),
     popup = Color(0xFF1F1F1F),
     stroke = Color(0xBFE1E6EB).copy(alpha = 0.1f),
     onHighlight = Color.White,
@@ -932,6 +947,57 @@ private val DarkPanelColors = PanelColors(
     warning = Color(0xFFFFC46B),
     error = Color(0xFFFF9B9B)
 )
+
+/**
+ * 选择面板配色。
+ *
+ * [material] 为 true 时宿主内容层已被替换，根背景透明以透出窗口的 DWM 云母/亚克力；
+ * 卡片与控制件使用按材质调校的半透明色，保证文字可读性。
+ * 其他情况保留原有不透明配色，作为追加式覆盖层的回退。
+ */
+private fun panelColorsFor(
+    dark: Boolean,
+    windowStyle: String?,
+    material: Boolean
+): PanelColors {
+    val base = if (dark) DarkPanelColors else LightPanelColors
+    if (!material) return base
+    if (dark) {
+        // Acrylic 深色约 #505050，Mica / Mica Alt 约 #272727；统一用带透明度的浅灰叠加。
+        val surfaceTint = Color(0xFF7C7C7C).copy(alpha = 0.34f)
+        return base.copy(
+            background = Color.Transparent,
+            text = Color(0xFFEBEEF1),
+            subText = Color(0xFFCCD0D5).copy(alpha = 0.91f),
+            subBackground = surfaceTint,
+            controlBackground = surfaceTint,
+            popup = Color(0xFF2A2A2A).copy(alpha = 0.96f),
+            stroke = Color(0xFF9B9BA1).copy(alpha = 1f / 3f)
+        )
+    }
+    if (windowStyle == "WindowsAcrylic") {
+        // 浅色 Acrylic 的背景更暗，卡片用极低透明度的白色叠加。
+        return base.copy(
+            background = Color.Transparent,
+            text = Color(0xFF1E1715),
+            subText = Color.Black.copy(alpha = 0.56f),
+            subBackground = Color.White.copy(alpha = 0.16f),
+            controlBackground = Color.Black.copy(alpha = 0.045f),
+            popup = Color(0xFFFCFCFC).copy(alpha = 0.97f),
+            stroke = Color(0xFF808080).copy(alpha = 0.28f)
+        )
+    }
+    // 浅色 Mica / Mica Alt：原生卡片约为 #F5F5F5 / #EDEDED。
+    return base.copy(
+        background = Color.Transparent,
+        text = Color(0xFF25272B),
+        subText = Color(0xFF777B82),
+        subBackground = Color(0xFFFCFCFC).copy(alpha = 0.72f),
+        controlBackground = Color(0xFFEDEEF1).copy(alpha = 0.72f),
+        popup = Color(0xFFFCFCFC).copy(alpha = 0.97f),
+        stroke = Color(0xFF8C8C8C).copy(alpha = 0.15f)
+    )
+}
 
 private val LocalPanelColors = staticCompositionLocalOf { LightPanelColors }
 

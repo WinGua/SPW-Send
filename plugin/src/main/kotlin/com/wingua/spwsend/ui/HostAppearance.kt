@@ -4,13 +4,28 @@ import java.lang.reflect.Modifier
 
 /** 宿主当前外观（读取失败时为空，走系统深浅色回退）。 */
 data class HostAppearance(
-    val dark: Boolean?
-)
+    val dark: Boolean? = null,
+    val windowStyle: String? = null,
+    val fontStrategy: String? = null,
+    val customFontFilePath: String? = null,
+) {
+    /** 当前窗口样式是否由宿主窗口的 DWM 材质绘制背景。 */
+    val materialWindow: Boolean
+        get() = windowStyle in MATERIAL_WINDOW_STYLES
+
+    companion object {
+        val MATERIAL_WINDOW_STYLES = setOf(
+            "WindowsAcrylic",
+            "WindowsMica",
+            "WindowsMicaAlt",
+        )
+    }
+}
 
 /**
  * 通过反射读取椒盐音乐 `AppConfig`，避免编译期依赖宿主内部类。
  *
- * 宿主字段被混淆或重命名时返回 null，不影响面板使用。
+ * 宿主字段被混淆或重命名时返回空值，不影响面板使用。
  */
 object HostAppearanceReader {
 
@@ -19,15 +34,21 @@ object HostAppearanceReader {
     fun read(): HostAppearance = runCatching {
         val clazz = Class.forName(APP_CONFIG_CLASS)
         val instance = runCatching { clazz.getField("INSTANCE").get(null) }.getOrNull()
-        val theme = readMember(clazz, instance, "lightDarkTheme")
         HostAppearance(
-            dark = when (theme) {
+            dark = when (readMember(clazz, instance, "lightDarkTheme")) {
                 "Light" -> false
                 "Dark" -> true
                 else -> null
-            }
+            },
+            windowStyle = readMember(clazz, instance, "spwWindowStyle"),
+            fontStrategy = readMember(clazz, instance, "fontStrategy"),
+            customFontFilePath = readMember(clazz, instance, "customFontFilePath"),
         )
-    }.getOrDefault(HostAppearance(null))
+    }.getOrDefault(HostAppearance())
+
+    /** 宿主类加载器，用于读取宿主内置字体等资源。 */
+    fun hostClassLoader(): ClassLoader? =
+        runCatching { Class.forName(APP_CONFIG_CLASS).classLoader }.getOrNull()
 
     private fun readMember(clazz: Class<*>, instance: Any?, property: String): String? {
         val getterName = "get" + property.replaceFirstChar { it.uppercase() }

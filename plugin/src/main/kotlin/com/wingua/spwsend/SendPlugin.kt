@@ -2,9 +2,11 @@
 
 package com.wingua.spwsend
 
+import com.wingua.spwsend.ui.HostMaterialLayer
 import com.wingua.spwsend.ui.SendController
 import com.wingua.spwsend.ui.SendOverlay
 import com.wingua.spwsend.ui.SendPanelState
+import com.wingua.spwsend.ui.hostNavigationAvailable
 import com.xuncorp.spw.workshop.api.ActionShortcut
 import com.xuncorp.spw.workshop.api.PluginContext
 import com.xuncorp.spw.workshop.api.PluginPermission
@@ -17,8 +19,9 @@ import javax.swing.SwingUtilities
 /**
  * SPW-Send 椒盐音乐模组入口。
  *
- * 通过配置页按钮或快捷键（Ctrl+Alt+S）打开同步面板；
+ * 通过配置页按钮或快捷键（Ctrl+Alt+S）打开 / 关闭同步面板；
  * 面板以 Compose 自绘内嵌在宿主内容区，不创建独立窗口。
+ * 面板打开时暂时隐藏宿主内容层，让窗口的 DWM 材质直接透出。
  */
 class SendPlugin(
     pluginContext: PluginContext
@@ -26,17 +29,20 @@ class SendPlugin(
 
     private var panelHook: AutoCloseable? = null
 
+    private var materialHook: AutoCloseable? = null
+
+    private var injectionWarningShown = false
+
     override fun start() {
         registerShortcut()
-        registerPanelHook()
+        registerPanelHooks()
     }
 
     override fun stop() {
         runCatching {
             WorkshopApi.manager.keyBindingManager.unregister(actionId = ACTION_OPEN_PANEL)
         }
-        runCatching { panelHook?.close() }
-        panelHook = null
+        closeHooks()
         SwingUtilities.invokeLater {
             SendPanelState.close()
             SendController.shutdown()
@@ -50,50 +56,97 @@ class SendPlugin(
         runCatching {
             WorkshopApi.manager.keyBindingManager.register(
                 actionId = ACTION_OPEN_PANEL,
-                title = "打开 SPW-Send 同步面板",
+                title = "打开 / 关闭 SPW-Send 同步面板",
                 defaultShortcut = ActionShortcut(
                     KeyEvent.VK_S,
                     ActionShortcut.CONTROL or ActionShortcut.ALT
                 ),
                 hasGlobal = true,
-                handler = Runnable { openPanel() }
+                handler = Runnable { togglePanel() }
             )
         }
     }
 
-    private fun registerPanelHook() {
+    private fun registerPanelHooks() {
         if (!WorkshopApi.manager.isPermissionGranted(PluginPermission.CLASS_TRANSFORM)) {
-            WorkshopApi.ui.toast(
-                "SPW-Send 需要「界面注入」权限才能显示同步面板",
-                WorkshopApi.Ui.ToastType.Warning
-            )
+            if (!injectionWarningShown) {
+                injectionWarningShown = true
+                WorkshopApi.ui.toast(
+                    "SPW-Send 需要「界面注入」权限才能显示同步面板",
+                    WorkshopApi.Ui.ToastType.Warning
+                )
+            }
             return
         }
-        runCatching {
-            panelHook = WorkshopApi.hookRegistrar.afterComposable(
-                className = "com.xuncorp.voxzen.ui.navigation.AppNavigationKt",
-                methodName = "AppNavigation",
-                inClass = "androidx.compose.ui.ۄ"
+
+        // 面板渲染入口：始终追加在宿主导航之后。
+        panelHook = runCatching {
+            WorkshopApi.hookRegistrar.afterComposable(
+                className = TARGET_CLASS,
+                methodName = TARGET_METHOD,
+                inClass = TARGET_CALLER
             ) { _ ->
                 SendOverlay()
             }
         }.onFailure {
-            WorkshopApi.ui.toast(
-                "同步面板注入失败，请从插件配置打开",
-                WorkshopApi.Ui.ToastType.Warning
-            )
+            if (!injectionWarningShown) {
+                injectionWarningShown = true
+                WorkshopApi.ui.toast(
+                    "同步面板注入失败，请从插件配置打开",
+                    WorkshopApi.Ui.ToastType.Warning
+                )
+            }
+        }.getOrNull()
+        if (panelHook == null) return
+
+        // 可选：接管宿主导航根。面板打开时保留宿主组合但不绘制，
+        // 让窗口的 DWM 云母 / 亚克力背景直接透出；失败时退回不透明面板。
+        if (hostNavigationAvailable()) {
+            materialHook = runCatching {
+                WorkshopApi.hookRegistrar.replaceComposable(
+                    className = TARGET_CLASS,
+                    methodName = TARGET_METHOD,
+                    inClass = TARGET_CALLER
+                ) { _ ->
+                    HostMaterialLayer()
+                }
+            }.getOrNull()
         }
+    }
+
+    private fun closeHooks() {
+        runCatching { materialHook?.close() }
+        runCatching { panelHook?.close() }
+        materialHook = null
+        panelHook = null
+        SendPanelState.materialBridgeAvailable = false
     }
 
     companion object {
         private const val ACTION_OPEN_PANEL = "spw-send-open-panel"
+        private const val TARGET_CLASS = "com.xuncorp.voxzen.ui.navigation.AppNavigationKt"
+        private const val TARGET_METHOD = "AppNavigation"
+        private const val TARGET_CALLER = "androidx.compose.ui.ۄ"
 
-        /** 插件配置页「打开同步面板」按钮的入口，也被快捷键调用。 */
+        /** 插件配置页「打开同步面板」按钮的入口。 */
         @JvmStatic
         fun openPanel() {
             SwingUtilities.invokeLater {
                 SendPanelState.open()
                 SendController.start()
+            }
+        }
+
+        /** 快捷键入口：面板已打开时关闭，否则打开。 */
+        @JvmStatic
+        fun togglePanel() {
+            SwingUtilities.invokeLater {
+                if (SendPanelState.visible) {
+                    SendController.requestClose()
+                } else {
+                    SendPanelState.open()
+                    SendController.start()
+                }
             }
         }
     }
