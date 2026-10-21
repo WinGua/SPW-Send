@@ -1,13 +1,10 @@
 package com.wingua.spwsend.ui
 
-/** 背景外观选项，与宿主窗口材质一一对应。 */
+/** 背景外观选项。 */
 internal enum class BackgroundStyle(val value: String) {
     Auto("auto"),
-    Mica("mica"),
-    Acrylic("acrylic"),
-    MicaAlt("micaAlt"),
-    Classic("classic"),
-    Gradient("gradient");
+    Glass("glass"),
+    Solid("solid");
 
     companion object {
 
@@ -15,15 +12,13 @@ internal enum class BackgroundStyle(val value: String) {
             entries.firstOrNull { it.value.equals(value, ignoreCase = true) } ?: Auto
 
         /**
-         * 把外观选项换算成配色所用的窗口样式；
-         * [Auto] 直接使用宿主读取结果，经典与渐变不使用材质配色。
+         * 跟随宿主时：只有「椒盐经典」（无窗口材质）使用纯色，
+         * 其余材质样式以及读取不到窗口样式的情况都使用磨砂壁纸背景。
          */
-        fun resolveWindowStyle(style: BackgroundStyle, hostStyle: String?): String? = when (style) {
-            Auto -> hostStyle
-            Mica -> "WindowsMica"
-            Acrylic -> "WindowsAcrylic"
-            MicaAlt -> "WindowsMicaAlt"
-            Classic, Gradient -> null
+        fun usesGlass(style: BackgroundStyle, hostStyle: String?): Boolean = when (style) {
+            Glass -> true
+            Solid -> false
+            Auto -> hostStyle != CLASSIC_WINDOW_STYLE
         }
     }
 }

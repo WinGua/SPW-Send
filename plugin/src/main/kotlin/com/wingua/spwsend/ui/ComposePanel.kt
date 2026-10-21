@@ -96,16 +96,12 @@ fun SendOverlay() {
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
     val style = AppearanceSettings.backgroundStyle
-    val windowStyle = BackgroundStyle.resolveWindowStyle(style, appearance.windowStyle)
-    val materialStyle = windowStyle in MATERIAL_WINDOW_STYLES
-    val wallpaper = remember(materialStyle) {
-        if (materialStyle) Wallpaper.load() else null
+    val glass = BackgroundStyle.usesGlass(style, appearance.windowStyle)
+    val wallpaper = remember(glass) {
+        if (glass) Wallpaper.load() else null
     }
-    val useGradient = style == BackgroundStyle.Gradient ||
-        (style == BackgroundStyle.Auto && windowStyle == null)
-    val glass = materialStyle || useGradient
-    val palette = remember(windowStyle, dark, glass) {
-        hostPalette(windowStyle, dark, glass)
+    val palette = remember(dark, glass) {
+        hostPalette(dark, glass)
     }
     val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
         HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
@@ -132,9 +128,7 @@ fun SendOverlay() {
                 ) { }
         ) {
             BackgroundLayer(
-                windowStyle = windowStyle,
-                materialStyle = materialStyle,
-                useGradient = useGradient,
+                glass = glass,
                 dark = dark,
                 wallpaper = wallpaper,
                 solidColor = palette.background
@@ -146,22 +140,15 @@ fun SendOverlay() {
 }
 
 /**
- * 页面背景：优先壁纸模糊（近似云母 / 亚克力），其次渐变，最后实色。
+ * 页面背景：优先壁纸磨砂（跟随宿主或磨砂玻璃），其次渐变，最后实色。
  */
 @Composable
 private fun BackgroundLayer(
-    windowStyle: String?,
-    materialStyle: Boolean,
-    useGradient: Boolean,
+    glass: Boolean,
     dark: Boolean,
     wallpaper: ImageBitmap?,
     solidColor: Color
 ) {
-    val blurRadius = when (windowStyle) {
-        "WindowsAcrylic" -> 120.dp
-        "WindowsMicaAlt" -> 44.dp
-        else -> 64.dp
-    }
     Box(Modifier.fillMaxSize()) {
         when {
             wallpaper != null -> {
@@ -171,37 +158,23 @@ private fun BackgroundLayer(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .blur(radius = blurRadius)
+                        .blur(radius = 64.dp)
                 )
-                Box(Modifier.fillMaxSize().background(materialTint(windowStyle, dark)))
+                Box(Modifier.fillMaxSize().background(glassTint(dark)))
             }
 
-            materialStyle || useGradient -> GradientBackground(dark)
+            glass -> GradientBackground(dark)
 
             else -> Box(Modifier.fillMaxSize().background(solidColor))
         }
     }
 }
 
-/** 壁纸上的材质色调层，让模糊壁纸接近云母 / 亚克力的观感。 */
-private fun materialTint(windowStyle: String?, dark: Boolean): Color = when (windowStyle) {
-    "WindowsAcrylic" -> if (dark) {
-        Color(0xFF0F1726).copy(alpha = 0.45f)
-    } else {
-        Color(0xFFE6ECF5).copy(alpha = 0.56f)
-    }
-
-    "WindowsMicaAlt" -> if (dark) {
-        Color(0xFF1E2431).copy(alpha = 0.48f)
-    } else {
-        Color(0xFFFBFBFD).copy(alpha = 0.62f)
-    }
-
-    else -> if (dark) {
-        Color(0xFF161C28).copy(alpha = 0.55f)
-    } else {
-        Color(0xFFF4F4F6).copy(alpha = 0.68f)
-    }
+/** 壁纸上的磨砂色调层，兼顾通透与文字对比度。 */
+private fun glassTint(dark: Boolean): Color = if (dark) {
+    Color(0xFF161C28).copy(alpha = 0.55f)
+} else {
+    Color(0xFFF4F4F6).copy(alpha = 0.68f)
 }
 
 @Composable
@@ -322,9 +295,13 @@ private fun StatusIndicator() {
 @Composable
 private fun LocalInfoPanelCard() {
     val appearance = remember { HostAppearanceReader.read() }
+    val glass = BackgroundStyle.usesGlass(
+        AppearanceSettings.backgroundStyle,
+        appearance.windowStyle
+    )
     val materialLabel = buildString {
         append(appearance.windowStyle ?: "未知")
-        append(" · 实色近似")
+        append(if (glass) " · 磨砂玻璃" else " · 经典纯色")
     }
     PanelCard(modifier = Modifier.fillMaxWidth()) {
         Column(

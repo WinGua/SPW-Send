@@ -9,8 +9,8 @@
           "key": "background.style",
           "title": "背景外观",
           "summary": "选择面板背景的纹理与配色",
-          "entries": ["跟随宿主", "云母", "亚克力", "云母 Alt", "经典纯色", "微光渐变"],
-          "entry_values": ["auto", "mica", "acrylic", "micaAlt", "classic", "gradient"],
+          "entries": ["跟随宿主", "磨砂玻璃", "经典纯色"],
+          "entry_values": ["auto", "glass", "solid"],
           "default_value": "auto"
         },
         {
