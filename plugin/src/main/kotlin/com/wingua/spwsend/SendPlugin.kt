@@ -6,7 +6,6 @@ import com.wingua.spwsend.ui.HostMaterialLayer
 import com.wingua.spwsend.ui.SendController
 import com.wingua.spwsend.ui.SendOverlay
 import com.wingua.spwsend.ui.SendPanelState
-import com.wingua.spwsend.ui.hostNavigationAvailable
 import com.xuncorp.spw.workshop.api.ActionShortcut
 import com.xuncorp.spw.workshop.api.PluginContext
 import com.xuncorp.spw.workshop.api.PluginPermission
@@ -101,17 +100,15 @@ class SendPlugin(
 
         // 可选：接管宿主导航根。面板打开时保留宿主组合但不绘制，
         // 让窗口的 DWM 云母 / 亚克力背景直接透出；失败时退回不透明面板。
-        if (hostNavigationAvailable()) {
-            materialHook = runCatching {
-                WorkshopApi.hookRegistrar.replaceComposable(
-                    className = TARGET_CLASS,
-                    methodName = TARGET_METHOD,
-                    inClass = TARGET_CALLER
-                ) { _ ->
-                    HostMaterialLayer()
-                }
-            }.getOrNull()
-        }
+        materialHook = runCatching {
+            WorkshopApi.hookRegistrar.replaceComposable(
+                className = TARGET_CLASS,
+                methodName = TARGET_METHOD,
+                inClass = TARGET_CALLER
+            ) { _ ->
+                HostMaterialLayer()
+            }
+        }.getOrNull()
     }
 
     private fun closeHooks() {
