@@ -7,7 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /** 宿主当前字体；读取失败时使用系统默认字体。 */
-val LocalHostFontFamily = staticCompositionLocalOf { FontFamily.Default }
+val LocalHostFontFamily = staticCompositionLocalOf<FontFamily> { FontFamily.Default }
 
 /**
  * 跟随椒盐音乐的字体设置。
