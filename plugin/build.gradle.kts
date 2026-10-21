@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "com.wingua.spwsend"
-version = "0.1.3"
+version = "0.1.4"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25

@@ -157,7 +157,11 @@ private fun BackgroundLayer(
     wallpaper: ImageBitmap?,
     solidColor: Color
 ) {
-    val acrylic = windowStyle == "WindowsAcrylic"
+    val blurRadius = when (windowStyle) {
+        "WindowsAcrylic" -> 120.dp
+        "WindowsMicaAlt" -> 44.dp
+        else -> 64.dp
+    }
     Box(Modifier.fillMaxSize()) {
         when {
             wallpaper != null -> {
@@ -167,9 +171,9 @@ private fun BackgroundLayer(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .blur(radius = if (acrylic) 96.dp else 56.dp)
+                        .blur(radius = blurRadius)
                 )
-                Box(Modifier.fillMaxSize().background(materialTint(acrylic, dark)))
+                Box(Modifier.fillMaxSize().background(materialTint(windowStyle, dark)))
             }
 
             materialStyle || useGradient -> GradientBackground(dark)
@@ -180,16 +184,24 @@ private fun BackgroundLayer(
 }
 
 /** 壁纸上的材质色调层，让模糊壁纸接近云母 / 亚克力的观感。 */
-private fun materialTint(acrylic: Boolean, dark: Boolean): Color = when {
-    acrylic -> if (dark) {
-        Color(0xFF15171C).copy(alpha = 0.62f)
+private fun materialTint(windowStyle: String?, dark: Boolean): Color = when (windowStyle) {
+    "WindowsAcrylic" -> if (dark) {
+        Color(0xFF0F1726).copy(alpha = 0.52f)
     } else {
-        Color(0xFFE8EAEF).copy(alpha = 0.62f)
+        Color(0xFFE6ECF5).copy(alpha = 0.56f)
     }
 
-    dark -> Color(0xFF1B1B20).copy(alpha = 0.70f)
+    "WindowsMicaAlt" -> if (dark) {
+        Color(0xFF24242A).copy(alpha = 0.54f)
+    } else {
+        Color(0xFFFBFBFD).copy(alpha = 0.62f)
+    }
 
-    else -> Color(0xFFF5F5F8).copy(alpha = 0.74f)
+    else -> if (dark) {
+        Color(0xFF1B1B20).copy(alpha = 0.62f)
+    } else {
+        Color(0xFFF4F4F6).copy(alpha = 0.68f)
+    }
 }
 
 @Composable
@@ -236,7 +248,8 @@ private fun SendPanel() {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                        // 下沿留空，避开宿主底部的迷你播放条。
+                        .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 96.dp)
                 ) {
                     Column(Modifier.width(320.dp).fillMaxHeight()) {
                         LocalInfoPanelCard()
@@ -262,7 +275,7 @@ private fun SendPanel() {
                         .fillMaxSize()
                         .padding(padding)
                         .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
+                        .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp)
                 ) {
                     LocalInfoPanelCard()
                     Spacer(Modifier.height(12.dp))
