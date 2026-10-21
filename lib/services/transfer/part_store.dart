@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import '../core/constants.dart';
-import '../core/utils.dart';
+import '../../core/constants.dart';
+import '../../core/utils.dart';
 
 /// 分片元数据（与协议 10.2 一致）。
 class PartMeta {
