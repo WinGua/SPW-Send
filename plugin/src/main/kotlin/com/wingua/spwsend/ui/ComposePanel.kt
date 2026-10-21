@@ -186,19 +186,19 @@ private fun BackgroundLayer(
 /** 壁纸上的材质色调层，让模糊壁纸接近云母 / 亚克力的观感。 */
 private fun materialTint(windowStyle: String?, dark: Boolean): Color = when (windowStyle) {
     "WindowsAcrylic" -> if (dark) {
-        Color(0xFF0F1726).copy(alpha = 0.52f)
+        Color(0xFF0F1726).copy(alpha = 0.45f)
     } else {
         Color(0xFFE6ECF5).copy(alpha = 0.56f)
     }
 
     "WindowsMicaAlt" -> if (dark) {
-        Color(0xFF24242A).copy(alpha = 0.54f)
+        Color(0xFF1E2431).copy(alpha = 0.48f)
     } else {
         Color(0xFFFBFBFD).copy(alpha = 0.62f)
     }
 
     else -> if (dark) {
-        Color(0xFF1B1B20).copy(alpha = 0.62f)
+        Color(0xFF161C28).copy(alpha = 0.55f)
     } else {
         Color(0xFFF4F4F6).copy(alpha = 0.68f)
     }

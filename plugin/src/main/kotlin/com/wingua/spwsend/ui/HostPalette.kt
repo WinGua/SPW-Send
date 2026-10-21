@@ -24,10 +24,10 @@ internal fun hostPalette(windowStyle: String?, dark: Boolean, glass: Boolean): S
         return if (dark) {
             base.copy(
                 background = Color(0xFF202024),
-                subBackground = if (acrylic) {
-                    Color(0xFFD7E3F5).copy(alpha = 0.10f)
-                } else {
-                    Color.White.copy(alpha = if (micaAlt) 0.07f else 0.085f)
+                subBackground = when {
+                    acrylic -> Color(0xFFD7E3F5).copy(alpha = 0.10f)
+                    micaAlt -> Color(0xFFEAF0F8).copy(alpha = 0.07f)
+                    else -> Color(0xFFE3EAF6).copy(alpha = 0.08f)
                 },
                 popup = Color(0xFF2A2A2A),
                 text = Color(0xFFEBEEF1),
