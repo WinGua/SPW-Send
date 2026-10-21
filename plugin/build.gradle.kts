@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "com.wingua.spwsend"
-version = "0.1.0"
+version = "0.1.1"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
@@ -30,11 +30,12 @@ dependencies {
     compileOnly(libs.spw.workshop.api)
     kapt(libs.spw.workshop.api)
 
-    // 宿主已自带 Compose 与 SaltUI，仅编译期使用，不打进 .spmod。
-    compileOnly("org.jetbrains.compose.runtime:runtime:1.12.1")
-    compileOnly("org.jetbrains.compose.foundation:foundation:1.12.1")
-    compileOnly("org.jetbrains.compose.ui:ui:1.12.1")
-    compileOnly("io.github.moriafly:salt-ui:3.0.0-beta02")
+    // 宿主插件运行时由 spw-workshop-api 提供 SaltUI 2.9.0-alpha02 与 Compose 1.12.0，
+    // 版本必须与其保持一致，否则会在宿主中出现 NoSuchFieldError / NoSuchMethodError。
+    compileOnly("org.jetbrains.compose.runtime:runtime:1.12.0")
+    compileOnly("org.jetbrains.compose.foundation:foundation:1.12.0")
+    compileOnly("org.jetbrains.compose.ui:ui:1.12.0")
+    compileOnly("io.github.moriafly:salt-ui:2.9.0-alpha02")
 }
 
 spmod {

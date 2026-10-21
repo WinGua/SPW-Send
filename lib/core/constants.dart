@@ -15,7 +15,7 @@ class AppConstants {
   static const String appTag = 'spw-send-android';
 
   /// 当前应用版本（与 pubspec.yaml 的 version 保持一致）。
-  static const String currentVersion = '0.1.0';
+  static const String currentVersion = '0.1.1';
 
   /// 可接受的最低对端版本。
   static const int minPeer = 1;

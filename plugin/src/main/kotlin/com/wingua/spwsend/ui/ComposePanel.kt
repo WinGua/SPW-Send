@@ -11,6 +11,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -48,7 +50,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -60,18 +61,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.moriafly.salt.ui.BasicButton
 import com.moriafly.salt.ui.Button
-import com.moriafly.salt.ui.ButtonAppearance
-import com.moriafly.salt.ui.ButtonIntent
-import com.moriafly.salt.ui.Card
+import com.moriafly.salt.ui.ButtonType
 import com.moriafly.salt.ui.SaltConfigs
-import com.moriafly.salt.ui.SaltMaterial
 import com.moriafly.salt.ui.SaltTheme
 import com.moriafly.salt.ui.Surface
 import com.moriafly.salt.ui.Text
 import com.moriafly.salt.ui.UnstableSaltUiApi
-import com.moriafly.salt.ui.material.MaterialSource
-import com.moriafly.salt.ui.material.MaterialType
 import com.wingua.spwsend.core.Mapping
 import com.wingua.spwsend.core.PathUtil
 
@@ -86,60 +83,19 @@ fun SendOverlay() {
     val appearance = remember { HostAppearanceReader.read() }
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
-    val materialType = remember(appearance.windowStyle) { resolveMaterialType(appearance.windowStyle) }
-    SaltTheme(
-        configs = SaltConfigs.default(isDarkTheme = dark),
-        material = SaltMaterial.default(materialType)
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            if (materialType != MaterialType.None) {
-                MaterialSource(
-                    modifier = Modifier.fillMaxSize(),
-                    content = { MaterialBackdrop() }
-                )
-            }
-            Surface(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        if (materialType == MaterialType.None) {
-                            SaltTheme.colors.background
-                        } else {
-                            Color.Transparent
-                        }
-                    )
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { }
-            ) {
-                SendPanel()
-            }
+    SaltTheme(configs = SaltConfigs.default(isDarkTheme = dark)) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(SaltTheme.colors.background)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { }
+        ) {
+            SendPanel()
         }
     }
-}
-
-/** 材质模式下作为 Haze 源的背景，避免宿主界面从透明区域透出。 */
-@Composable
-private fun MaterialBackdrop() {
-    val top = SaltTheme.colors.background
-    val bottom = if (SaltTheme.configs.isDarkTheme) {
-        Color(0xFF14171C)
-    } else {
-        Color(0xFFE6E9EE)
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(top, bottom)))
-    )
-}
-
-/** 宿主窗口材质映射；未知或纯色窗口回退 None。 */
-private fun resolveMaterialType(windowStyle: String?): MaterialType = when (windowStyle) {
-    "WindowsAcrylic" -> MaterialType.Acrylic
-    "WindowsMica", "WindowsMicaAlt" -> MaterialType.Mica
-    else -> MaterialType.None
 }
 
 @Composable
@@ -168,7 +124,7 @@ private fun SendPanel() {
                 Spacer(Modifier.height(14.dp))
                 Row(Modifier.fillMaxWidth().weight(1f)) {
                     Column(Modifier.width(320.dp).fillMaxHeight()) {
-                        LocalInfoCard()
+                        LocalInfoPanelCard()
                         Spacer(Modifier.height(12.dp))
                         SectionLabel("手机设备")
                         Spacer(Modifier.height(6.dp))
@@ -195,7 +151,7 @@ private fun SendPanel() {
             ) {
                 Header()
                 Spacer(Modifier.height(12.dp))
-                LocalInfoCard()
+                LocalInfoPanelCard()
                 Spacer(Modifier.height(12.dp))
                 SectionLabel("手机设备")
                 Spacer(Modifier.height(6.dp))
@@ -217,12 +173,15 @@ private fun SendPanel() {
 @Composable
 private fun Header() {
     val colors = SaltTheme.colors
+    val success = successColor()
+    val warning = warningColor()
+    val error = errorColor()
     val running = SendController.serviceRunning
     val statusColor = when {
-        SendController.startupError != null -> colors.error
-        SendController.syncActive || SendController.compareActive -> colors.warning
-        running -> colors.success
-        else -> colors.error
+        SendController.startupError != null -> error
+        SendController.syncActive || SendController.compareActive -> warning
+        running -> success
+        else -> error
     }
     val statusText = when {
         SendController.startupError != null -> "服务未启动"
@@ -251,15 +210,15 @@ private fun Header() {
             Button(
                 onClick = { SendController.requestClose() },
                 text = "关闭",
-                appearance = ButtonAppearance.Subtle
+                type = ButtonType.Sub
             )
         }
     }
 }
 
 @Composable
-private fun LocalInfoCard() {
-    Card(
+private fun LocalInfoPanelCard() {
+    PanelCard(
         modifier = Modifier.fillMaxWidth(),
         color = SaltTheme.colors.subBackground,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -319,7 +278,7 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun DeviceSection(modifier: Modifier = Modifier) {
     val peers = SendController.peers
-    Card(
+    PanelCard(
         modifier = modifier,
         color = SaltTheme.colors.subBackground,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -348,7 +307,7 @@ private fun DeviceSection(modifier: Modifier = Modifier) {
 
 @Composable
 private fun DeviceRow(peer: PeerUi) {
-    Card(
+    PanelCard(
         modifier = Modifier.fillMaxWidth(),
         color = Color.Transparent,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -373,7 +332,7 @@ private fun DeviceRow(peer: PeerUi) {
                 Text(
                     sub,
                     style = SaltTheme.textStyles.sub,
-                    color = if (peer.connected) SaltTheme.colors.success else SaltTheme.colors.subText
+                    color = if (peer.connected) successColor() else SaltTheme.colors.subText
                 )
             }
             Spacer(Modifier.width(8.dp))
@@ -381,10 +340,10 @@ private fun DeviceRow(peer: PeerUi) {
                 onClick = { SendController.toggleConnection(peer.id) },
                 text = if (peer.connected) "断开" else "连接",
                 enabled = !SendController.actionLocked,
-                appearance = if (peer.connected) {
-                    ButtonAppearance.Subtle
+                type = if (peer.connected) {
+                    ButtonType.Sub
                 } else {
-                    ButtonAppearance.Filled
+                    ButtonType.Highlight
                 }
             )
         }
@@ -394,7 +353,7 @@ private fun DeviceRow(peer: PeerUi) {
 @Composable
 private fun MappingSection(modifier: Modifier = Modifier) {
     val mappings = SendController.mappings
-    Card(
+    PanelCard(
         modifier = modifier,
         color = SaltTheme.colors.subBackground,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -411,15 +370,13 @@ private fun MappingSection(modifier: Modifier = Modifier) {
                     onClick = { SendController.beginAddMapping() },
                     text = "新增",
                     enabled = !SendController.syncActive && !SendController.compareActive,
-                    appearance = ButtonAppearance.Subtle
+                    type = ButtonType.Sub
                 )
                 Spacer(Modifier.width(6.dp))
-                Button(
+                DangerButton(
                     onClick = { SendController.deleteCurrentMapping() },
                     text = "删除",
-                    enabled = !SendController.syncActive && SendController.currentMappingName != null,
-                    appearance = ButtonAppearance.Subtle,
-                    intent = ButtonIntent.Destructive
+                    enabled = !SendController.syncActive && SendController.currentMappingName != null
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -488,7 +445,7 @@ private fun SyncSection() {
         !SendController.compareActive &&
         !SendController.syncActive
 
-    Card(
+    PanelCard(
         modifier = Modifier.fillMaxWidth(),
         color = SaltTheme.colors.subBackground,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -513,10 +470,10 @@ private fun SyncSection() {
                             onClick = { SendController.selectMapping(mapping.id) },
                             text = shortText(mapping.name, 14),
                             enabled = !SendController.syncActive && !SendController.compareActive,
-                            appearance = if (selected) {
-                                ButtonAppearance.Filled
+                            type = if (selected) {
+                                ButtonType.Highlight
                             } else {
-                                ButtonAppearance.Subtle
+                                ButtonType.Sub
                             }
                         )
                     }
@@ -539,19 +496,19 @@ private fun SyncSection() {
                     onClick = { SendController.compareNow() },
                     text = "对比",
                     enabled = canCompare,
-                    appearance = ButtonAppearance.Subtle
+                    type = ButtonType.Sub
                 )
                 Button(
                     onClick = { SendController.syncNow() },
                     text = "同步",
                     enabled = canSync,
-                    appearance = ButtonAppearance.Filled
+                    type = ButtonType.Highlight
                 )
                 Button(
                     onClick = { SendController.cancelSync() },
                     text = "取消",
                     enabled = SendController.syncActive,
-                    appearance = ButtonAppearance.Subtle
+                    type = ButtonType.Sub
                 )
             }
             Spacer(Modifier.height(10.dp))
@@ -593,7 +550,7 @@ private fun ProgressBar(progress: Float) {
 
 @Composable
 private fun ResultSection(modifier: Modifier = Modifier) {
-    Card(
+    PanelCard(
         modifier = modifier,
         color = SaltTheme.colors.subBackground,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -659,7 +616,7 @@ private fun ResultSection(modifier: Modifier = Modifier) {
 
 @Composable
 private fun LogSection(modifier: Modifier = Modifier) {
-    Card(
+    PanelCard(
         modifier = modifier,
         color = SaltTheme.colors.subBackground,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -724,8 +681,8 @@ private fun BoxScope.DialogLayer() {
                     .widthIn(max = 460.dp)
             ) {
                 when (val content = shown) {
-                    is NameInput -> NameInputCard(content)
-                    is PanelDialog -> MessageCard(content)
+                    is NameInput -> NameInputPanelCard(content)
+                    is PanelDialog -> MessagePanelCard(content)
                 }
             }
         }
@@ -733,8 +690,8 @@ private fun BoxScope.DialogLayer() {
 }
 
 @Composable
-private fun MessageCard(dialog: PanelDialog) {
-    Card(
+private fun MessagePanelCard(dialog: PanelDialog) {
+    PanelCard(
         modifier = Modifier.fillMaxWidth(),
         color = SaltTheme.colors.popup,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -744,7 +701,7 @@ private fun MessageCard(dialog: PanelDialog) {
                 dialog.title,
                 style = SaltTheme.textStyles.main,
                 fontWeight = FontWeight.Bold,
-                color = if (dialog.success) SaltTheme.colors.success else SaltTheme.colors.error
+                color = if (dialog.success) successColor() else errorColor()
             )
             Spacer(Modifier.height(8.dp))
             Text(dialog.message, style = SaltTheme.textStyles.sub, color = SaltTheme.colors.subText)
@@ -758,28 +715,34 @@ private fun MessageCard(dialog: PanelDialog) {
                     Button(
                         onClick = { SendController.cancelDialog() },
                         text = "取消",
-                        appearance = ButtonAppearance.Subtle
+                        type = ButtonType.Sub
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Button(
-                    onClick = { SendController.confirmDialog() },
-                    text = dialog.confirmText,
-                    appearance = ButtonAppearance.Filled,
-                    intent = if (dialog.showCancel) ButtonIntent.Destructive else ButtonIntent.Normal
-                )
+                if (dialog.showCancel) {
+                    DangerButton(
+                        onClick = { SendController.confirmDialog() },
+                        text = dialog.confirmText
+                    )
+                } else {
+                    Button(
+                        onClick = { SendController.confirmDialog() },
+                        text = dialog.confirmText,
+                        type = ButtonType.Highlight
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun NameInputCard(input: NameInput) {
+private fun NameInputPanelCard(input: NameInput) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(input.path) {
         runCatching { focusRequester.requestFocus() }
     }
-    Card(
+    PanelCard(
         modifier = Modifier.fillMaxWidth(),
         color = SaltTheme.colors.popup,
         border = BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
@@ -821,7 +784,7 @@ private fun NameInputCard(input: NameInput) {
             }
             input.error?.let { error ->
                 Spacer(Modifier.height(6.dp))
-                Text(error, style = SaltTheme.textStyles.sub, color = SaltTheme.colors.error)
+                Text(error, style = SaltTheme.textStyles.sub, color = errorColor())
             }
             Spacer(Modifier.height(6.dp))
             Text(
@@ -840,18 +803,68 @@ private fun NameInputCard(input: NameInput) {
                 Button(
                     onClick = { SendController.cancelNameInput() },
                     text = "取消",
-                    appearance = ButtonAppearance.Subtle
+                    type = ButtonType.Sub
                 )
                 Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = { SendController.submitNameInput() },
                     text = "确定",
-                    appearance = ButtonAppearance.Filled
+                    type = ButtonType.Highlight
                 )
             }
         }
     }
 }
+
+/** SaltUI 2.x 没有 Card，这里用基础布局组合出同等的卡片容器。 */
+@Composable
+private fun PanelCard(
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    border: BorderStroke? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    val fill = if (color == Color.Unspecified) SaltTheme.colors.subBackground else color
+    val stroke = border ?: BorderStroke(Dp.Hairline, SaltTheme.colors.stroke)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(fill)
+            .border(stroke, shape),
+        content = content
+    )
+}
+
+@Composable
+private fun DangerButton(
+    onClick: () -> Unit,
+    text: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier
+) {
+    val danger = errorColor()
+    BasicButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        backgroundColor = danger.copy(alpha = 0.16f)
+    ) {
+        Text(text = text, color = if (enabled) danger else SaltTheme.colors.subText)
+    }
+}
+
+@Composable
+private fun successColor(): Color =
+    if (SaltTheme.configs.isDarkTheme) Color(0xFF7BE0A0) else Color(0xFF2E9E5B)
+
+@Composable
+private fun warningColor(): Color =
+    if (SaltTheme.configs.isDarkTheme) Color(0xFFFFC46B) else Color(0xFFB26A00)
+
+@Composable
+private fun errorColor(): Color =
+    if (SaltTheme.configs.isDarkTheme) Color(0xFFFF9B9B) else Color(0xFFCF4545)
 
 private fun readSystemDarkTheme(): Boolean = runCatching {
     val process = Runtime.getRuntime().exec(
