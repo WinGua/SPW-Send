@@ -64,6 +64,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -797,6 +798,8 @@ private fun MessagePanelCard(dialog: PanelDialog) {
 @Composable
 private fun NameInputPanelCard(input: NameInput) {
     val focusRequester = remember { FocusRequester() }
+    // 保留输入法组合状态，避免中文候选提交后拼音残留在两侧。
+    var fieldValue by remember(input.path) { mutableStateOf(TextFieldValue(input.value)) }
     LaunchedEffect(input.path) {
         runCatching { focusRequester.requestFocus() }
     }
@@ -821,8 +824,11 @@ private fun NameInputPanelCard(input: NameInput) {
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 BasicTextField(
-                    value = input.value,
-                    onValueChange = { SendController.updateNameInput(it) },
+                    value = fieldValue,
+                    onValueChange = { value ->
+                        fieldValue = value
+                        SendController.updateNameInput(value.text)
+                    },
                     singleLine = true,
                     textStyle = PanelMain.copy(
                         color = SaltTheme.colors.text,
@@ -833,7 +839,11 @@ private fun NameInputPanelCard(input: NameInput) {
                         .fillMaxWidth()
                         .focusRequester(focusRequester)
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+                            val composing = fieldValue.composition != null
+                            if (event.type == KeyEventType.KeyDown &&
+                                event.key == Key.Enter &&
+                                !composing
+                            ) {
                                 SendController.submitNameInput()
                                 true
                             } else {

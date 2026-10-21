@@ -76,7 +76,7 @@ UDP 广播到 `255.255.255.255:53317`，并对每个网卡的定向广播地址�
   "port": 53318,
   "session": "4b7e...",
   "app": "spw-send-mod",
-  "appVersion": "0.1.5"
+  "appVersion": "0.1.6"
 }
 ```
 
@@ -147,7 +147,7 @@ Content-Type: application/json
   "port": 53318,
   "session": "4b7e...",
   "app": "spw-send-mod",
-  "appVersion": "0.1.5",
+  "appVersion": "0.1.6",
   "token": "c81d..."
 }
 ```
