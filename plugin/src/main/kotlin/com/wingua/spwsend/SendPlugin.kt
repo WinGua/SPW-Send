@@ -64,7 +64,8 @@ class SendPlugin(
     /** 读取「背景外观」设置并监听配置页的修改。 */
     private fun applyAppearanceConfig() {
         runCatching {
-            AppearanceSettings.apply(configManager.getConfig().get(KEY_BACKGROUND_STYLE, "auto"))
+            val value = configManager.getConfig().get(KEY_BACKGROUND_STYLE, "auto")
+            SwingUtilities.invokeLater { AppearanceSettings.apply(value) }
             if (!appearanceListenerAttached) {
                 configManager.addConfigChangeListener(appearanceListener)
                 appearanceListenerAttached = true

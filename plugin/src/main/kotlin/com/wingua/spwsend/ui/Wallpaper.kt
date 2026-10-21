@@ -5,7 +5,7 @@ import androidx.compose.ui.graphics.decodeToImageBitmap
 import java.io.File
 
 /**
- * 读取 Windows 当前桌面壁纸，作为云母 / 亚克力的近似纹理。
+ * 读取 Windows 当前桌面壁纸，作为「磨砂玻璃」背景的纹理。
  *
  * 先查注册表，再回退到系统的 TranscodedWallpaper 缓存；
  * 读取或解码失败返回 null，由调用方回退到渐变背景。
