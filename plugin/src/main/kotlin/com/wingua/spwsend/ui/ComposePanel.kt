@@ -80,9 +80,8 @@ import com.wingua.spwsend.core.PathUtil
 /**
  * 宿主导航根组件之后追加的全屏页面。
  *
- * 页面沿用宿主的标题栏样式（56dp 返回按钮行）与配色：
- * 材质样式下根背景透明，让窗口的 DWM 云母 / 亚克力直接透出；
- * 无法接管内容层时退回与宿主经典主题一致的实色页面。
+ * 页面沿用宿主的标题栏样式（56dp 返回按钮行）与字体；
+ * 背景按窗口样式取近似实色，不接管宿主导航、不参与材质竞争。
  * 不创建任何 AWT 窗口。
  */
 @Composable
@@ -91,10 +90,8 @@ fun SendOverlay() {
     val appearance = remember { HostAppearanceReader.read() }
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
-    val materialActive = SendPanelState.materialBridgeAvailable &&
-        appearance.windowStyle in MATERIAL_WINDOW_STYLES
-    val palette = remember(appearance.windowStyle, dark, materialActive) {
-        hostPalette(appearance.windowStyle, dark, materialActive)
+    val palette = remember(appearance.windowStyle, dark) {
+        hostPalette(appearance.windowStyle, dark)
     }
     val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
         HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
@@ -114,7 +111,7 @@ fun SendOverlay() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (materialActive) Color.Transparent else palette.background)
+                .background(palette.background)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
@@ -235,21 +232,7 @@ private fun LocalInfoPanelCard() {
     val appearance = remember { HostAppearanceReader.read() }
     val materialLabel = buildString {
         append(appearance.windowStyle ?: "未知")
-        when {
-            SendPanelState.materialBridgeAvailable &&
-                appearance.windowStyle in MATERIAL_WINDOW_STYLES -> append(" · 已接管")
-
-            SendPanelState.materialBridgeAvailable -> append(" · 经典样式")
-
-            !SendPanelState.materialHookRegistered -> {
-                append(" · 接管注册失败")
-                SendPanelState.materialHookError?.let { error ->
-                    append("（").append(error.take(40)).append("）")
-                }
-            }
-
-            else -> append(" · 未组合")
-        }
+        append(" · 实色近似")
     }
     PanelCard(modifier = Modifier.fillMaxWidth()) {
         Column(

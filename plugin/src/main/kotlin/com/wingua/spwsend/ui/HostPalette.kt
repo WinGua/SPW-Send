@@ -3,7 +3,7 @@ package com.wingua.spwsend.ui
 import androidx.compose.ui.graphics.Color
 import com.moriafly.salt.ui.SaltColors
 
-/** 由宿主窗口绘制 DWM 背景的样式。 */
+/** 由宿主窗口绘制背景的材质样式。 */
 internal val MATERIAL_WINDOW_STYLES = setOf(
     "WindowsAcrylic",
     "WindowsMica",
@@ -13,13 +13,12 @@ internal val MATERIAL_WINDOW_STYLES = setOf(
 /**
  * 按宿主窗口样式还原配色。
  *
- * 材质样式取自椒盐音乐 1.19.0 的经典 / 亚克力 / 云母 / 云母 Alt 页面取样值：
- * 材质模式下页面透明、卡片半透明，让窗口背景直接参与合成；
- * 无法接管内容层时退回与宿主经典主题一致的实色页面。
+ * 面板不接管宿主导航、也不竞争窗口材质，因此这里用取样值做出与宿主一致的实色近似：
+ * 经典主题用经典页面色，亚克力 / 云母 / 云母 Alt 用对应材质的聚焦底色与卡片色。
  */
-internal fun hostPalette(windowStyle: String?, dark: Boolean, materialActive: Boolean): SaltColors {
+internal fun hostPalette(windowStyle: String?, dark: Boolean): SaltColors {
     val base = if (dark) SaltColors.defaultDark() else SaltColors.defaultLight()
-    if (!materialActive) {
+    if (windowStyle !in MATERIAL_WINDOW_STYLES) {
         return base.copy(
             background = if (dark) Color(0xFF232323) else Color(0xFFF8F8F8),
             subBackground = if (dark) Color(0xFF2A2A2A) else Color(0xFFFCFCFC),
@@ -30,31 +29,42 @@ internal fun hostPalette(windowStyle: String?, dark: Boolean, materialActive: Bo
         )
     }
     if (dark) {
+        val acrylic = windowStyle == "WindowsAcrylic"
         return base.copy(
-            background = Color.Transparent,
-            subBackground = Color(0xFF7C7C7C).copy(alpha = 0.34f),
+            background = if (acrylic) Color(0xFF505050) else Color(0xFF272727),
+            subBackground = if (acrylic) Color(0xFF5F5F5F) else Color(0xFF444444),
             popup = Color(0xFF2A2A2A),
             text = Color(0xFFEBEEF1),
-            subText = Color(0xFFCCD0D5).copy(alpha = 0.91f),
-            stroke = Color(0xFF9B9BA1).copy(alpha = 1f / 3f)
+            subText = Color(0xFFCCD0D5),
+            stroke = if (acrylic) Color(0xFF737375) else Color(0xFF616163)
         )
     }
-    if (windowStyle == "WindowsAcrylic") {
-        return base.copy(
-            background = Color.Transparent,
-            subBackground = Color.White.copy(alpha = 0.16f),
+    return when (windowStyle) {
+        "WindowsAcrylic" -> base.copy(
+            background = Color(0xFFDDDDDD),
+            subBackground = Color(0xFFE2E2E2),
             popup = Color(0xFFFCFCFC),
             text = Color(0xFF1E1715),
-            subText = Color.Black.copy(alpha = 0.56f),
-            stroke = Color(0xFF808080).copy(alpha = 0.28f)
+            subText = Color(0xFF5F5F5F),
+            stroke = Color(0xFFC7C7C7)
+        )
+
+        "WindowsMicaAlt" -> base.copy(
+            background = Color(0xFFEDEDED),
+            subBackground = Color(0xFFFBFBFB),
+            popup = Color(0xFFFCFCFC),
+            text = Color(0xFF25272B),
+            subText = Color(0xFF777B82),
+            stroke = Color(0xFFE1E1E1)
+        )
+
+        else -> base.copy(
+            background = Color(0xFFF5F5F5),
+            subBackground = Color(0xFFFCFCFC),
+            popup = Color(0xFFFCFCFC),
+            text = Color(0xFF25272B),
+            subText = Color(0xFF777B82),
+            stroke = Color(0xFFE4E4E4)
         )
     }
-    return base.copy(
-        background = Color.Transparent,
-        subBackground = Color(0xFFFCFCFC).copy(alpha = 0.72f),
-        popup = Color(0xFFFCFCFC),
-        text = Color(0xFF25272B),
-        subText = Color(0xFF777B82),
-        stroke = Color(0xFFE9EAED)
-    )
 }

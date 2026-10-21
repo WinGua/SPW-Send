@@ -59,8 +59,3 @@ spmod {
     )
     PluginOpenSourceUrl = "https://github.com/WinGua/SPW-Send"
 }
-
-tasks.jar {
-    // 宿主导航桩只用于编译，运行时必须由宿主的 ffmpeg-x64.dll 提供真实实现。
-    exclude("com/xuncorp/**")
-}
