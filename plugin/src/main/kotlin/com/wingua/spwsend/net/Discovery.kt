@@ -204,6 +204,7 @@ class Discovery(
                 "id" to deviceId,
                 "name" to deviceName,
                 "role" to "pc",
+                "form" to "desktop",
                 "app" to Constants.APP_ID,
                 "appVersion" to Constants.APP_VERSION,
                 "port" to portProvider(),

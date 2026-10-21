@@ -92,24 +92,26 @@ class SyncCore(
             notifyChanged()
         },
         onRemoteLog = { data ->
-            // 手机端主动拉取时由手机端推送日志，本机也留存一份。
+            // MySend 安卓端主动拉取后推送日志：{name, count, bytes, files}。
+            // 本机同样留存一份，字段换算成本地日志结构。
             runCatching {
-                logStore.add(
-                    SyncLog(
-                        task = data.str("task"),
-                        startedAt = data.longValue("startedAt"),
-                        finishedAt = data.longValue("finishedAt"),
-                        total = data.intValue("total"),
-                        success = data.intValue("success"),
-                        failed = data.intValue("failed"),
-                        bytes = data.longValue("bytes"),
-                        failures = data["failures"].asList().map { item ->
-                            val failure = item.asMap()
-                            SyncFailure(failure.str("p"), failure.str("reason"))
-                        }
+                val name = data.str("name")
+                val count = data.intValue("count")
+                if (name.isNotEmpty() && count > 0) {
+                    val now = System.currentTimeMillis()
+                    logStore.add(
+                        SyncLog(
+                            task = name,
+                            startedAt = now,
+                            finishedAt = now,
+                            total = count,
+                            success = count,
+                            failed = 0,
+                            bytes = data.longValue("bytes")
+                        )
                     )
-                )
-                notifyChanged()
+                    notifyChanged()
+                }
             }
         }
     )
@@ -218,16 +220,20 @@ class SyncCore(
             discovery?.markConnected(peer.id)
             return true
         }
+        // 主动配对时附带本机签发的 token，让 MySend 安卓端配对后可直接反向调用本机。
+        val ownToken = endpoints.issueTokenFor(peer.id)
         val body = Json.stringify(
             Json.obj(
                 "id" to config.deviceId,
                 "name" to config.deviceName,
                 "role" to "pc",
+                "form" to "desktop",
                 "app" to Constants.APP_ID,
                 "appVersion" to Constants.APP_VERSION,
                 "proto" to Constants.PROTO,
                 "port" to actualPort,
-                "session" to session
+                "session" to session,
+                "token" to ownToken
             )
         ).toByteArray(Charsets.UTF_8)
         val result = HttpClientLite.post(
@@ -235,7 +241,7 @@ class SyncCore(
             port = peer.port,
             path = "/v2/pair",
             headers = mapOf(
-                "X-SpwSend-Proto" to "${Constants.PROTO}",
+                Constants.HEADER_PROTO to "${Constants.PROTO}",
                 "Content-Type" to "application/json; charset=utf-8"
             ),
             body = body,
@@ -314,6 +320,11 @@ class SyncCore(
         var bytes = 0L
         var cancelledFlag = false
         val failures = ArrayList<SyncFailure>()
+        // 与 MySend 一致：先批量查询续传偏移，失败时逐文件回退。
+        val offsets = runCatching {
+            queryResumeBatch(peer, token, pending.mapping.name, files)
+        }.getOrDefault(emptyMap())
+        val syncedNames = ArrayList<String>()
 
         try {
             for (file in files) {
@@ -322,12 +333,25 @@ class SyncCore(
                     break
                 }
                 try {
-                    val offset = queryResume(peer, token, pending.mapping.name, file)
+                    val offset = offsets[file.relativePath]
+                        ?: queryResume(peer, token, pending.mapping.name, file)
                     if (file.size == 0L || offset < file.size) {
-                        upload(peer, token, pending.mapping, file, offset, cancelled)
+                        try {
+                            upload(peer, token, pending.mapping, file, offset, cancelled)
+                        } catch (e: RemoteException) {
+                            // 分片可能在批量查询后被清理：与 MySend 一样重查一次偏移后重试。
+                            if (e.code != "RANGE_INVALID") throw e
+                            val retryOffset = if (offset > 0) {
+                                0L
+                            } else {
+                                queryResume(peer, token, pending.mapping.name, file)
+                            }
+                            upload(peer, token, pending.mapping, file, retryOffset, cancelled)
+                        }
                     }
                     success++
                     bytes += file.size
+                    syncedNames.add(file.file.name)
                 } catch (_: CancelledException) {
                     cancelledFlag = true
                     break
@@ -352,19 +376,28 @@ class SyncCore(
             bytes = bytes,
             failures = failures
         )
-        runCatching { logStore.add(log) }
-        // 同步结束后推送日志给对端，双方各自留存。
-        runCatching {
-            HttpClientLite.post(
-                host = peer.address,
-                port = peer.port,
-                path = "/v2/log",
-                headers = authHeaders(token) + mapOf(
-                    "Content-Type" to "application/json; charset=utf-8"
-                ),
-                body = Json.stringify(log.asJson()).toByteArray(Charsets.UTF_8),
-                readTimeoutMs = 5_000
-            )
+        // 与 MySend 一致：只有实际同步成功的文件才记录并推送日志。
+        if (syncedNames.isNotEmpty()) {
+            runCatching { logStore.add(log) }
+            runCatching {
+                HttpClientLite.post(
+                    host = peer.address,
+                    port = peer.port,
+                    path = "/v2/log",
+                    headers = authHeaders(token) + mapOf(
+                        "Content-Type" to "application/json; charset=utf-8"
+                    ),
+                    body = Json.stringify(
+                        Json.obj(
+                            "name" to pending.mapping.name,
+                            "count" to syncedNames.size,
+                            "bytes" to bytes,
+                            "files" to syncedNames
+                        )
+                    ).toByteArray(Charsets.UTF_8),
+                    readTimeoutMs = 5_000
+                )
+            }
         }
         return SyncOutcome(log, cancelledFlag)
     }
@@ -376,7 +409,7 @@ class SyncCore(
             path = "/v2/index",
             query = mapOf("name" to mappingName),
             headers = authHeaders(token),
-            readTimeoutMs = Constants.CONTROL_TIMEOUT_MS
+            readTimeoutMs = Constants.INDEX_TIMEOUT_MS
         )
         if (result.status != 200) throw RemoteException(codeOf(result), messageOf(result))
         return result.json()["files"].asList()
@@ -395,7 +428,8 @@ class SyncCore(
             query = mapOf(
                 "name" to mappingName,
                 "path" to file.relativePath,
-                "size" to file.size.toString()
+                "size" to file.size.toString(),
+                "mtime" to file.mtimeMs.toString()
             ),
             headers = authHeaders(token),
             readTimeoutMs = Constants.CONTROL_TIMEOUT_MS
@@ -403,6 +437,49 @@ class SyncCore(
         if (result.status != 200) throw RemoteException(codeOf(result), messageOf(result))
         val offset = result.json().longValue("offset")
         return if (offset in 0 until file.size) offset else 0L
+    }
+
+    /**
+     * 批量查询续传偏移（MySend `/v2/resume/batch`）。
+     *
+     * 对端未实现或请求失败时返回空表，调用方会逐文件回退到 `/v2/resume`。
+     */
+    private fun queryResumeBatch(
+        peer: Peer,
+        token: String,
+        mappingName: String,
+        files: List<LocalFile>
+    ): Map<String, Long> {
+        if (files.isEmpty()) return emptyMap()
+        val merged = HashMap<String, Long>()
+        val chunkSize = 2000
+        var start = 0
+        while (start < files.size) {
+            val end = minOf(start + chunkSize, files.size)
+            val items = files.subList(start, end).map {
+                Json.obj("p" to it.relativePath, "s" to it.size, "m" to it.mtimeMs)
+            }
+            val result = HttpClientLite.post(
+                host = peer.address,
+                port = peer.port,
+                path = "/v2/resume/batch",
+                headers = authHeaders(token) + mapOf(
+                    "Content-Type" to "application/json; charset=utf-8"
+                ),
+                body = Json.stringify(
+                    Json.obj("name" to mappingName, "items" to items)
+                ).toByteArray(Charsets.UTF_8),
+                readTimeoutMs = Constants.CONTROL_TIMEOUT_MS
+            )
+            if (result.status != 200) return emptyMap()
+            val offsets = result.json()["offsets"].asMap()
+            for ((path, value) in offsets) {
+                val offset = (value as? Number)?.toLong() ?: continue
+                merged[path] = offset
+            }
+            start = end
+        }
+        return merged
     }
 
     private fun upload(
@@ -416,8 +493,6 @@ class SyncCore(
         val length = file.size - offset
         val headers = authHeaders(token) + mapOf(
             "X-Offset" to offset.toString(),
-            "X-File-Size" to file.size.toString(),
-            "X-File-Mtime" to file.mtimeMs.toString(),
             "Content-Type" to "application/octet-stream"
         )
         val timeout = fileTimeoutMs(file.size)
@@ -425,7 +500,12 @@ class SyncCore(
             host = peer.address,
             port = peer.port,
             path = "/v2/upload",
-            query = mapOf("name" to mapping.name, "path" to file.relativePath),
+            query = mapOf(
+                "name" to mapping.name,
+                "path" to file.relativePath,
+                "size" to file.size.toString(),
+                "mtime" to file.mtimeMs.toString()
+            ),
             headers = headers,
             length = length,
             readTimeoutMs = timeout
@@ -454,8 +534,8 @@ class SyncCore(
     }
 
     private fun authHeaders(token: String): Map<String, String> = mapOf(
-        "X-SpwSend-Proto" to "${Constants.PROTO}",
-        "X-SpwSend-Token" to token
+        Constants.HEADER_PROTO to "${Constants.PROTO}",
+        Constants.HEADER_TOKEN to token
     )
 
     private fun codeOf(result: HttpClientLite.Result): String {

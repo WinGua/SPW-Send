@@ -18,7 +18,7 @@ import javax.swing.SwingUtilities
  * SPW-Send 椒盐音乐模组入口。
  *
  * 通过配置页按钮或快捷键（Ctrl+Alt+S）打开同步面板；
- * 面板以 Compose + SaltUI 内嵌在宿主内容区，不创建独立窗口。
+ * 面板以 Compose 自绘内嵌在宿主内容区，不创建独立窗口。
  */
 class SendPlugin(
     pluginContext: PluginContext

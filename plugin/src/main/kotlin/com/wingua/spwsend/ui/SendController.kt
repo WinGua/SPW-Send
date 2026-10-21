@@ -227,7 +227,7 @@ object SendController {
                         status = "连接失败"
                         dialog = PanelDialog(
                             title = "连接失败",
-                            message = "无法连接「${peer.name}」。请确认手机端已打开 SPW-Send，且与电脑处于同一局域网。",
+                            message = "无法连接「${peer.name}」。请确认手机端已打开 MySend，且与电脑处于同一局域网。",
                             success = false
                         )
                     }

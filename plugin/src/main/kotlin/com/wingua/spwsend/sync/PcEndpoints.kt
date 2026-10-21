@@ -53,6 +53,19 @@ class PcEndpoints(
         }
     }
 
+    /**
+     * 为本机签发一个供 [deviceId] 反向调用的 token。
+     *
+     * 主动配对时把该 token 放进请求体，MySend 安卓端据此可直接调用本机，
+     * 无需等手机端再主动配对一次。
+     */
+    fun issueTokenFor(deviceId: String): String {
+        forget(deviceId)
+        val token = newToken()
+        tokens[token] = deviceId
+        return token
+    }
+
     /** 服务下线时清空全部会话。 */
     fun clearTokens() {
         tokens.clear()
@@ -118,6 +131,7 @@ class PcEndpoints(
 
     private fun index(req: HttpRequest): HttpResponse {
         if (req.method != "GET") return error(405, "BAD_REQUEST", "方法不允许")
+        if (busyProvider()) return error(409, "BUSY", "正在同步中")
         val name = req.query["name"] ?: ""
         val mapping = configProvider().mappings.firstOrNull { it.name == name }
             ?: return error(404, "MAPPING_NOT_FOUND", "映射「$name」不存在")
@@ -136,6 +150,7 @@ class PcEndpoints(
 
     private fun file(req: HttpRequest): HttpResponse {
         if (req.method != "GET") return error(405, "BAD_REQUEST", "方法不允许")
+        if (busyProvider()) return error(409, "BUSY", "正在同步中")
         val name = req.query["name"] ?: ""
         val rel = req.query["path"] ?: ""
         val mapping = configProvider().mappings.firstOrNull { it.name == name }
@@ -178,7 +193,7 @@ class PcEndpoints(
 
     private fun disconnect(req: HttpRequest): HttpResponse {
         if (req.method != "POST") return error(405, "BAD_REQUEST", "方法不允许")
-        val token = req.header("X-SpwSend-Token") ?: ""
+        val token = req.header(Constants.HEADER_TOKEN) ?: ""
         val deviceId = tokens.remove(token) ?: return error(401, "UNAUTHORIZED", "会话不存在")
         forget(deviceId)
         onPeerDisconnected(deviceId)
@@ -187,7 +202,7 @@ class PcEndpoints(
 
     private fun authorized(req: HttpRequest, block: () -> HttpResponse): HttpResponse {
         // 协议规定除 hello/pair 外，token 缺失或错误一律 401。
-        val token = req.header("X-SpwSend-Token")
+        val token = req.header(Constants.HEADER_TOKEN)
         if (token == null || !tokens.containsKey(token)) {
             return error(401, "UNAUTHORIZED", "缺少或错误的会话 token")
         }
@@ -196,7 +211,7 @@ class PcEndpoints(
     }
 
     private fun protoMismatch(req: HttpRequest): HttpResponse? {
-        val raw = req.header("X-SpwSend-Proto")?.trim() ?: return null
+        val raw = req.header(Constants.HEADER_PROTO)?.trim() ?: return null
         val proto = raw.toIntOrNull()
             ?: return error(426, "PROTO_MISMATCH", "协议版本不一致")
         return if (proto != Constants.PROTO) {

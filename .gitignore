@@ -1,13 +1,6 @@
-# Flutter / Dart
-.dart_tool/
-.packages
-build/
-.flutter-plugins
-.flutter-plugins-dependencies
-.metadata
-
 # Gradle / JVM（plugin）
 .gradle/
+build/
 local.properties
 *.spmod
 
@@ -20,14 +13,5 @@ local.properties
 .DS_Store
 Thumbs.db
 
-# 密钥 / 本地配置
-keystore/
-*.jks
-*.keystore
-key.properties
-
-# Android 构建输出
-android/app/release
-android/app/debug
-android/app/profile
+# 本地配置
 dist/

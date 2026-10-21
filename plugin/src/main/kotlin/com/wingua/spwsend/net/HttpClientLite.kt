@@ -75,6 +75,8 @@ object HttpClientLite {
             conn.useCaches = false
             conn.instanceFollowRedirects = false
             conn.setRequestProperty("Connection", "close")
+            // MySend 服务端会按 Accept-Encoding 压缩 JSON；显式要求明文以免需要解压。
+            conn.setRequestProperty("Accept-Encoding", "identity")
             for ((k, v) in headers) conn.setRequestProperty(k, v)
 
             if (writer != null) {
