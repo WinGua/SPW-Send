@@ -100,11 +100,16 @@ class SendPlugin(
 
         // 可选：接管宿主导航根。面板打开时保留宿主组合但不绘制，
         // 让窗口的 DWM 云母 / 亚克力背景直接透出；失败时退回不透明面板。
+        //
+        // 同一调用点只允许一个替换生效，规则是「优先级最高者胜，同优先级最早注册者胜」。
+        // 听歌统计模组同样独占该调用点，默认 50 会被它先注册的替换挡住，
+        // 因此这里提高到 60，确保 SPW-Send 面板自己拿到内容层。
         materialHook = runCatching {
             WorkshopApi.hookRegistrar.replaceComposable(
                 className = TARGET_CLASS,
                 methodName = TARGET_METHOD,
-                inClass = TARGET_CALLER
+                inClass = TARGET_CALLER,
+                priority = 60
             ) { _ ->
                 HostMaterialLayer()
             }
