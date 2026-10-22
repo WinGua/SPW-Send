@@ -18,7 +18,7 @@ internal enum class BackgroundStyle(val value: String) {
         fun usesGlass(style: BackgroundStyle, hostStyle: String?): Boolean = when (style) {
             Glass -> true
             Solid -> false
-            Auto -> hostStyle != CLASSIC_WINDOW_STYLE
+            Auto -> !isSolidWindowStyle(hostStyle)
         }
     }
 }

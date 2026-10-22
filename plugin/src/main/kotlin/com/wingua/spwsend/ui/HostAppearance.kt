@@ -1,6 +1,7 @@
 package com.wingua.spwsend.ui
 
 import java.lang.reflect.Modifier
+import java.util.Locale
 
 /** 宿主当前外观（读取失败时为空，走系统深浅色回退）。 */
 data class HostAppearance(
@@ -23,9 +24,9 @@ object HostAppearanceReader {
         val clazz = Class.forName(APP_CONFIG_CLASS)
         val instance = runCatching { clazz.getField("INSTANCE").get(null) }.getOrNull()
         HostAppearance(
-            dark = when (readMember(clazz, instance, "lightDarkTheme")) {
-                "Light" -> false
-                "Dark" -> true
+            dark = when (readMember(clazz, instance, "lightDarkTheme")?.trim()?.lowercase(Locale.ROOT)) {
+                "light" -> false
+                "dark" -> true
                 else -> null
             },
             windowStyle = readMember(clazz, instance, "spwWindowStyle"),
@@ -37,6 +38,8 @@ object HostAppearanceReader {
     /** 宿主类加载器，用于读取宿主内置字体等资源。 */
     fun hostClassLoader(): ClassLoader? =
         runCatching { Class.forName(APP_CONFIG_CLASS).classLoader }.getOrNull()
+            ?: Thread.currentThread().contextClassLoader
+            ?: ClassLoader.getSystemClassLoader()
 
     private fun readMember(clazz: Class<*>, instance: Any?, property: String): String? {
         val getterName = "get" + property.replaceFirstChar { it.uppercase() }

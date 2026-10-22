@@ -2,9 +2,15 @@ package com.wingua.spwsend.ui
 
 import androidx.compose.ui.graphics.Color
 import com.moriafly.salt.ui.SaltColors
+import java.util.Locale
 
-/** 宿主「椒盐经典」的窗口样式值（没有 DWM 材质）。 */
-internal const val CLASSIC_WINDOW_STYLE = "None"
+/** 宿主「椒盐经典」等无 DWM 材质的窗口样式值。 */
+private val SOLID_WINDOW_STYLES = setOf("none", "classic", "经典", "椒盐经典")
+
+internal fun isSolidWindowStyle(hostStyle: String?): Boolean {
+    val normalized = hostStyle?.trim()?.lowercase(Locale.ROOT) ?: return false
+    return normalized in SOLID_WINDOW_STYLES
+}
 
 /**
  * 面板配色。

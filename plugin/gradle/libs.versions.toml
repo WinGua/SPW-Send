@@ -1,6 +1,6 @@
 [versions]
 kotlin = "2.4.20"
-spw-workshop-api = "0.1.0-dev22"
+spw-workshop-api = "0.1.0-dev23"
 
 [libraries]
 spw-workshop-api = { group = "com.github.Moriafly.spw-workshop-api", name = "spw-workshop-api", version.ref = "spw-workshop-api" }

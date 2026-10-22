@@ -11,7 +11,7 @@ object Constants {
     const val INDEX_TIMEOUT_MS = 60_000
     const val MAX_FILE_TIMEOUT_MS = 600_000
     const val APP_ID = "spw-send-mod"
-    const val APP_VERSION = "0.2.0"
+    const val APP_VERSION = "0.3"
     const val MIN_PEER = 1
     const val PART_DIR = ".mysend-part"
     const val LOG_RETENTION_MS = 7L * 24 * 60 * 60 * 1000

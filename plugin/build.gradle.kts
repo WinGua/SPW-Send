@@ -6,11 +6,11 @@ plugins {
     kotlin("jvm") version "2.4.20"
     kotlin("kapt") version "2.4.20"
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.20"
-    id("com.xuncorp.spw.workshop") version "0.1.0-dev22"
+    id("com.xuncorp.spw.workshop") version "0.1.0-dev23"
 }
 
 group = "com.wingua.spwsend"
-version = "0.2.0"
+version = "0.3"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
@@ -30,12 +30,12 @@ dependencies {
     compileOnly(libs.spw.workshop.api)
     kapt(libs.spw.workshop.api)
 
-    // 宿主提供 Compose 1.12 运行时；SaltUI 以非传递依赖打进 .spmod 的 lib/，
+    // 宿主提供 Compose 1.12.1 运行时；SaltUI 以非传递依赖打进 .spmod 的 lib/，
     // 由插件类加载器自行加载，避免依赖宿主是否暴露 SaltUI。
-    compileOnly("org.jetbrains.compose.runtime:runtime:1.12.0")
-    compileOnly("org.jetbrains.compose.foundation:foundation:1.12.0")
-    compileOnly("org.jetbrains.compose.ui:ui:1.12.0")
-    compileOnly("org.jetbrains.compose.animation:animation:1.12.0")
+    compileOnly("org.jetbrains.compose.runtime:runtime:1.12.1")
+    compileOnly("org.jetbrains.compose.foundation:foundation:1.12.1")
+    compileOnly("org.jetbrains.compose.ui:ui:1.12.1")
+    compileOnly("org.jetbrains.compose.animation:animation:1.12.1")
 
     implementation("io.github.moriafly:salt-ui-desktop:3.0.0-beta02") {
         isTransitive = false

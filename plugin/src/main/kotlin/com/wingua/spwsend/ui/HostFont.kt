@@ -32,16 +32,13 @@ object HostFont {
         return family
     }
 
-    private fun resolve(strategy: String?, customPath: String?): FontFamily = when (strategy) {
-        "MiSansRegular" -> {
-            val bytes = HostAppearanceReader.hostClassLoader()
-                ?.getResourceAsStream(MISANS_RESOURCE)
-                ?.use { it.readBytes() }
-                ?: return FontFamily.Default
+    private fun resolve(strategy: String?, customPath: String?): FontFamily = when {
+        "MiSansRegular".equals(strategy, ignoreCase = true) -> {
+            val bytes = loadMiSans() ?: return FontFamily.Default
             FontFamily(Font(identity = "spw-send:misans", data = bytes))
         }
 
-        "Custom" -> {
+        "Custom".equals(strategy, ignoreCase = true) -> {
             val path = customPath?.takeIf { it.isNotBlank() }
                 ?: return FontFamily.Default
             java.awt.Font.createFont(java.awt.Font.TRUETYPE_FONT, Path.of(path).toFile())
@@ -54,5 +51,13 @@ object HostFont {
         }
 
         else -> FontFamily.Default
+    }
+
+    /** 先按宿主当前资源路径读取，失败后在宿主 jar 中按文件名兜底。 */
+    private fun loadMiSans(): ByteArray? {
+        val exact = HostAppearanceReader.hostClassLoader()
+            ?.getResourceAsStream(MISANS_RESOURCE)
+            ?.use { it.readBytes() }
+        return exact ?: HostJar.readEntryBySuffix("/font/misans.ttf")
     }
 }

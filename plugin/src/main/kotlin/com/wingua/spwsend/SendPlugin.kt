@@ -3,6 +3,7 @@
 package com.wingua.spwsend
 
 import com.wingua.spwsend.ui.AppearanceSettings
+import com.wingua.spwsend.ui.HostUiTargets
 import com.wingua.spwsend.ui.SendController
 import com.wingua.spwsend.ui.SendOverlay
 import com.wingua.spwsend.ui.SendPanelState
@@ -26,6 +27,8 @@ import javax.swing.SwingUtilities
 class SendPlugin(
     pluginContext: PluginContext
 ) : SpwPlugin(pluginContext) {
+
+    private val hostVersion: String = pluginContext.spwVersion
 
     private var panelHook: AutoCloseable? = null
 
@@ -103,24 +106,39 @@ class SendPlugin(
             return
         }
 
-        // 面板渲染入口：始终追加在宿主导航之后。
-        panelHook = runCatching {
-            WorkshopApi.hookRegistrar.afterComposable(
-                className = TARGET_CLASS,
-                methodName = TARGET_METHOD,
-                inClass = TARGET_CALLER
-            ) { _ ->
-                SendOverlay()
-            }
-        }.onFailure {
+        // 宿主的 Compose 调用点类名随版本重新混淆，运行时动态定位，版本映射仅作兜底。
+        val candidates = HostUiTargets.resolve(hostVersion)
+        if (candidates.isEmpty()) {
             if (!injectionWarningShown) {
                 injectionWarningShown = true
                 WorkshopApi.ui.toast(
-                    "同步面板注入失败，请从插件配置打开",
+                    "SPW $hostVersion 尚未适配，同步面板无法显示",
                     WorkshopApi.Ui.ToastType.Warning
                 )
             }
-        }.getOrNull()
+            return
+        }
+
+        // 面板渲染入口：始终追加在宿主导航之后。
+        panelHook = candidates.firstNotNullOfOrNull { caller ->
+            runCatching {
+                WorkshopApi.hookRegistrar.afterComposable(
+                    className = TARGET_CLASS,
+                    methodName = TARGET_METHOD,
+                    inClass = caller
+                ) { _ ->
+                    SendOverlay()
+                }
+            }.getOrNull()
+        }
+
+        if (panelHook == null && !injectionWarningShown) {
+            injectionWarningShown = true
+            WorkshopApi.ui.toast(
+                "同步面板注入失败（SPW $hostVersion）",
+                WorkshopApi.Ui.ToastType.Warning
+            )
+        }
     }
 
     private fun closeHooks() {
@@ -133,7 +151,6 @@ class SendPlugin(
         private const val KEY_BACKGROUND_STYLE = "background.style"
         private const val TARGET_CLASS = "com.xuncorp.voxzen.ui.navigation.AppNavigationKt"
         private const val TARGET_METHOD = "AppNavigation"
-        private const val TARGET_CALLER = "androidx.compose.ui.ۄ"
 
         /** 插件配置页「打开同步面板」按钮的入口。 */
         @JvmStatic
