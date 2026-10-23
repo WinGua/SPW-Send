@@ -379,8 +379,8 @@ object SendController {
     }
 
     fun deleteCurrentMapping() {
-        if (core.busy || syncActive) {
-            dialog = PanelDialog("请稍候", "正在同步，暂时不能修改映射。", false)
+        if (core.busy || syncActive || compareActive) {
+            dialog = PanelDialog("请稍候", "正在对比或同步，暂时不能修改映射。", false)
             return
         }
         val mapping = currentMapping()
@@ -438,6 +438,22 @@ object SendController {
 
     fun cancelNameInput() {
         nameInput = null
+    }
+
+    fun clearLogs() {
+        if (logs.isEmpty()) return
+        dialog = PanelDialog(
+            title = "清除同步日志",
+            message = "确定清除本机全部同步日志吗？已同步的文件不会受影响。",
+            success = false,
+            confirmText = "清除",
+            showCancel = true,
+            onConfirm = {
+                logStore.clear()
+                refreshLogs()
+                status = "已清除同步日志"
+            }
+        )
     }
 
     fun cancelDialog() {

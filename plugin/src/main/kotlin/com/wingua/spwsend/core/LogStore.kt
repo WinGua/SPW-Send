@@ -67,6 +67,12 @@ class LogStore {
         return entries.take(limit).toList()
     }
 
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        save()
+    }
+
     private fun load() {
         if (!file.exists()) return
         runCatching {

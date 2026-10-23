@@ -333,8 +333,11 @@ class SyncCore(
                     break
                 }
                 try {
-                    val offset = offsets[file.relativePath]
+                    val rawOffset = offsets[file.relativePath]
                         ?: queryResume(peer, token, pending.mapping.name, file)
+                    // 批量查询不校验上限：分片恰好等于文件大小时按 0 重传，
+                    // 否则会跳过上传，导致分片永远无法原子落盘。
+                    val offset = if (rawOffset in 0 until file.size) rawOffset else 0L
                     if (file.size == 0L || offset < file.size) {
                         try {
                             upload(peer, token, pending.mapping, file, offset, cancelled)

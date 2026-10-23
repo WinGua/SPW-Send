@@ -240,7 +240,7 @@ private fun SendPanel() {
                         Spacer(Modifier.height(12.dp))
                         ResultSection(Modifier.fillMaxWidth().weight(1f))
                         Spacer(Modifier.height(12.dp))
-                        LogSection(Modifier.fillMaxWidth().height(142.dp))
+                        LogSection(Modifier.fillMaxWidth().height(158.dp))
                     }
                 }
             } else {
@@ -446,7 +446,9 @@ private fun MappingSection(modifier: Modifier = Modifier) {
                 PanelButton(
                     onClick = { SendController.deleteCurrentMapping() },
                     text = "删除",
-                    enabled = !SendController.syncActive && SendController.currentMappingName != null,
+                    enabled = !SendController.syncActive &&
+                        !SendController.compareActive &&
+                        SendController.currentMappingName != null,
                     type = PanelButtonType.Danger
                 )
             }
@@ -681,7 +683,20 @@ private fun ResultSection(modifier: Modifier = Modifier) {
 private fun LogSection(modifier: Modifier = Modifier) {
     PanelCard(modifier = modifier) {
         Column(Modifier.fillMaxSize().padding(14.dp)) {
-            PanelText("最近同步", style = PanelMain, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                PanelText(
+                    "最近同步",
+                    modifier = Modifier.weight(1f),
+                    style = PanelMain,
+                    fontWeight = FontWeight.Bold
+                )
+                PanelButton(
+                    onClick = { SendController.clearLogs() },
+                    text = "清除",
+                    enabled = SendController.logs.isNotEmpty(),
+                    type = PanelButtonType.Sub
+                )
+            }
             Spacer(Modifier.height(6.dp))
             if (SendController.logs.isEmpty()) {
                 PanelText(
