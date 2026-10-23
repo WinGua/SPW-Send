@@ -73,3 +73,17 @@ jobs:
             fi
             gh release delete "$tag" --yes --cleanup-tag
           done
+
+      # 再清理没有 Release 的孤立 tag，确保只保留当前版本
+      - name: 清理残留 tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --paginate "/repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/" \
+            --jq '.[].ref' | sed 's#^refs/tags/##' | while read -r tag; do
+            if [ -z "$tag" ] || [ "$tag" = "${GITHUB_REF_NAME}" ]; then
+              continue
+            fi
+            gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag}"
+          done
