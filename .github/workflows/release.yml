@@ -61,7 +61,9 @@ jobs:
             --latest
 
       # 仓库只保留当前版本：删除其余 Release 并同时清理对应 tag
+      # 仅 tag 触发时执行，避免手动从 main 运行时误删当前 Release
       - name: 清理旧版本
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
