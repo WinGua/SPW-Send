@@ -63,7 +63,7 @@ class LogStore {
 
     @Synchronized
     fun recent(limit: Int = 30): List<SyncLog> {
-        prune()
+        if (prune()) save()
         return entries.take(limit).toList()
     }
 
@@ -100,9 +100,10 @@ class LogStore {
         prune()
     }
 
-    private fun prune() {
+    /** 移除超过保留期的日志，返回是否真的删除了内容。 */
+    private fun prune(): Boolean {
         val cutoff = System.currentTimeMillis() - Constants.LOG_RETENTION_MS
-        entries.removeAll { it.finishedAt > 0 && it.finishedAt < cutoff }
+        return entries.removeAll { it.finishedAt > 0 && it.finishedAt < cutoff }
     }
 
     private fun save() {

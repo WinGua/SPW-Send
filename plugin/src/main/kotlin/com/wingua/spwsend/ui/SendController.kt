@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wingua.spwsend.core.ConfigStore
+import com.wingua.spwsend.core.Constants
 import com.wingua.spwsend.core.LocalFile
 import com.wingua.spwsend.core.LogStore
 import com.wingua.spwsend.core.Mapping
@@ -436,6 +437,10 @@ object SendController {
             return
         }
         if (input.mode == NameInputMode.Device) {
+            if (name.codePointCount(0, name.length) > Constants.DEVICE_NAME_MAX) {
+                nameInput = input.copy(error = "设备名称最多 ${Constants.DEVICE_NAME_MAX} 个字符")
+                return
+            }
             core.updateDeviceName(name)
             nameInput = null
             status = "设备名称已更新为「$name」"
