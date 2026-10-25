@@ -21,6 +21,7 @@
 - 运行时动态定位宿主的 Compose 调用点，适配 SPW 1.19.0 / 1.19.1 及后续重新混淆的版本
 - 协议以 MySend v2 为基准：[docs/PROTOCOL.md](docs/PROTOCOL.md)
 - 模组端：UDP 发现、HTTP 服务、目录对比、分片续传推送、SaltUI 内嵌面板
+- 面板背景自动跟随宿主窗口材质（采样宿主侧栏真实颜色），点击左侧导航栏可关闭面板
 - 云端构建：`plugin` 工作流产出 `.spmod`，`release` 工作流在打 tag 时发布 Release
 
 ## 构建
