@@ -149,7 +149,7 @@ class SyncCore(
 
         val disc = Discovery(
             deviceId = config.deviceId,
-            deviceName = config.deviceName,
+            deviceNameProvider = { config.deviceName },
             session = session,
             portProvider = { actualPort },
             onChanged = { notifyChanged() },
@@ -206,6 +206,14 @@ class SyncCore(
     @Synchronized
     fun updateMappings(mappings: List<Mapping>) {
         config = config.copy(mappings = mappings)
+        configStore.save(config)
+        notifyChanged()
+    }
+
+    /** 更新本机名称；发现广播与配对请求都读取该配置，下一次广播即生效。 */
+    @Synchronized
+    fun updateDeviceName(name: String) {
+        config = config.copy(deviceName = name)
         configStore.save(config)
         notifyChanged()
     }

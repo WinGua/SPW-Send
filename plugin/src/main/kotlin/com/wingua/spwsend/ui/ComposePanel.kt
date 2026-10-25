@@ -310,7 +310,12 @@ private fun LocalInfoPanelCard() {
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             PanelText("本机", style = PanelMain, fontWeight = FontWeight.Bold)
-            InfoRow("设备", SendController.deviceName.ifEmpty { "—" })
+            InfoRow(
+                label = "设备",
+                value = SendController.deviceName.ifEmpty { "—" },
+                action = "修改",
+                onClick = { SendController.beginEditDeviceName() }
+            )
             InfoRow("端口", if (SendController.port > 0) SendController.port.toString() else "未监听")
             InfoRow("会话", SendController.session.take(8))
             InfoRow("材质", materialLabel)
@@ -330,8 +335,28 @@ private fun LocalInfoPanelCard() {
 }
 
 @Composable
-private fun InfoRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+private fun InfoRow(
+    label: String,
+    value: String,
+    action: String? = null,
+    onClick: (() -> Unit)? = null
+) {
+    val rowModifier = if (onClick == null) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+    }
+    Row(
+        modifier = rowModifier.padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         PanelText(
             label,
             modifier = Modifier.width(48.dp),
@@ -345,6 +370,10 @@ private fun InfoRow(label: String, value: String) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+        if (action != null) {
+            Spacer(Modifier.width(6.dp))
+            PanelText(action, style = PanelSub, color = panelColors.highlight)
+        }
     }
 }
 
@@ -823,7 +852,7 @@ private fun NameInputPanelCard(input: NameInput) {
         color = panelColors.popup
     ) {
         Column(Modifier.fillMaxWidth().padding(20.dp)) {
-            PanelText("新增映射", style = PanelMain, fontWeight = FontWeight.Bold)
+            PanelText(input.title, style = PanelMain, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             PanelText(input.label, style = PanelSub, color = panelColors.subText)
             Spacer(Modifier.height(8.dp))
@@ -871,14 +900,16 @@ private fun NameInputPanelCard(input: NameInput) {
                 Spacer(Modifier.height(6.dp))
                 PanelText(error, style = PanelSub, color = errorColor())
             }
-            Spacer(Modifier.height(6.dp))
-            PanelText(
-                shortPath(input.path, 56),
-                style = PanelSub,
-                color = panelColors.subText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (input.path.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                PanelText(
+                    shortPath(input.path, 56),
+                    style = PanelSub,
+                    color = panelColors.subText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(Modifier.height(18.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),

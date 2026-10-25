@@ -33,7 +33,7 @@ class Peer(
  */
 class Discovery(
     private val deviceId: String,
-    private val deviceName: String,
+    private val deviceNameProvider: () -> String,
     private val session: String,
     private val portProvider: () -> Int,
     private val onChanged: () -> Unit,
@@ -186,7 +186,7 @@ class Discovery(
                 "t" to "hello",
                 "proto" to Constants.PROTO,
                 "id" to deviceId,
-                "name" to deviceName,
+                "name" to deviceNameProvider(),
                 "role" to "pc",
                 "form" to "desktop",
                 "app" to Constants.APP_ID,

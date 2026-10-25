@@ -38,12 +38,16 @@ data class PanelDialog(
     val onConfirm: (() -> Unit)? = null
 )
 
-/** 新增映射时的名称输入。 */
+/** 名称输入的用途。 */
+enum class NameInputMode { Mapping, Device }
+
+/** 名称输入弹窗。 */
 data class NameInput(
     val title: String,
     val label: String,
     val path: String,
     val value: String,
+    val mode: NameInputMode = NameInputMode.Mapping,
     val error: String? = null
 )
 
@@ -378,6 +382,17 @@ object SendController {
         )
     }
 
+    /** 编辑本机设备名称，手机端会以该名称显示电脑。 */
+    fun beginEditDeviceName() {
+        nameInput = NameInput(
+            title = "修改设备名称",
+            label = "设备名称",
+            path = "",
+            value = deviceName,
+            mode = NameInputMode.Device
+        )
+    }
+
     fun deleteCurrentMapping() {
         if (core.busy || syncActive || compareActive) {
             dialog = PanelDialog("请稍候", "正在对比或同步，暂时不能修改映射。", false)
@@ -415,7 +430,16 @@ object SendController {
         val input = nameInput ?: return
         val name = input.value.trim()
         if (name.isEmpty()) {
-            nameInput = input.copy(error = "请填写映射名称")
+            nameInput = input.copy(
+                error = if (input.mode == NameInputMode.Device) "请填写设备名称" else "请填写映射名称"
+            )
+            return
+        }
+        if (input.mode == NameInputMode.Device) {
+            core.updateDeviceName(name)
+            nameInput = null
+            status = "设备名称已更新为「$name」"
+            refreshFromCore()
             return
         }
         if (mappings.any { it.name == name }) {
