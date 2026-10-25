@@ -158,7 +158,7 @@ fun SendOverlay() {
                     indication = null
                 ) { }
         ) {
-            BackgroundLayer(dark = dark, tier = tier, color = palette.background)
+            BackgroundLayer(dark = dark, color = palette.background)
             SendPanel()
             DialogLayer()
         }
@@ -201,10 +201,10 @@ private fun handleHostMousePress(event: AWTEvent, window: Window, bounds: PanelB
 /**
  * 页面背景：材质底色 + 极弱方向性渐变。
  *
- * 不绘制壁纸图片，只在亚克力档额外叠加一层柔和亮度，模拟桌面色透过感。
+ * 不绘制壁纸图片，也不额外提亮，保持与宿主窗口材质一致的明度。
  */
 @Composable
-private fun BackgroundLayer(dark: Boolean, tier: MaterialTier, color: Color) {
+private fun BackgroundLayer(dark: Boolean, color: Color) {
     Box(Modifier.fillMaxSize().background(color)) {
         Box(
             Modifier
@@ -219,20 +219,6 @@ private fun BackgroundLayer(dark: Boolean, tier: MaterialTier, color: Color) {
                     )
                 )
         )
-        if (tier == MaterialTier.Acrylic) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = if (dark) 0.05f else 0.09f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-            )
-        }
     }
 }
 

@@ -15,10 +15,10 @@ internal fun panelBackground(dark: Boolean, tier: MaterialTier, wallpaper: Color
     val base = if (dark) Color(0xFF202024) else Color(0xFFF5F5F7)
     val ratio = when (tier) {
         MaterialTier.Classic -> 0f
-        MaterialTier.Mica -> 0.12f
-        MaterialTier.MicaAlt -> 0.17f
-        MaterialTier.Acrylic -> 0.38f
-        MaterialTier.Unknown -> 0.12f
+        MaterialTier.Mica -> 0.08f
+        MaterialTier.MicaAlt -> 0.10f
+        MaterialTier.Acrylic -> 0.22f
+        MaterialTier.Unknown -> 0.08f
     }
     if (wallpaper == null || ratio == 0f) return base
 
@@ -78,16 +78,16 @@ internal fun hostPalette(dark: Boolean, tier: MaterialTier, wallpaper: Color?): 
         )
     }
 
-    val cardAlpha = when (tier) {
-        MaterialTier.Acrylic -> if (dark) 0.14f else 0.56f
-        else -> if (dark) 0.10f else 0.72f
-    }
+    // 卡片只比底色亮约 8~10 级，与宿主的层级关系一致；亚克力不再额外提亮。
+    val cardAlpha = if (dark) 0.05f else if (tier == MaterialTier.Acrylic) 0.56f else 0.72f
+    val background = panelBackground(dark, tier, wallpaper)
+    val popup = blend(background, Color.White, if (dark) 0.10f else 0.45f)
     return base.copy(
-        background = panelBackground(dark, tier, wallpaper),
+        background = background,
         subBackground = Color.White.copy(alpha = cardAlpha),
-        popup = if (dark) Color(0xFF2A2A2A) else Color(0xFFFCFCFC),
+        popup = popup,
         text = if (dark) Color(0xFFEBEEF1) else Color(0xFF25272B),
         subText = if (dark) Color(0xFFCCD0D5) else Color(0xFF5F636B),
-        stroke = if (dark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f),
+        stroke = if (dark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.08f),
     )
 }
