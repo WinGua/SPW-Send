@@ -2,7 +2,6 @@
 
 package com.wingua.spwsend
 
-import com.wingua.spwsend.ui.AppearanceSettings
 import com.wingua.spwsend.ui.HostUiTargets
 import com.wingua.spwsend.ui.SendController
 import com.wingua.spwsend.ui.SendOverlay
@@ -13,9 +12,7 @@ import com.xuncorp.spw.workshop.api.PluginPermission
 import com.xuncorp.spw.workshop.api.SpwPlugin
 import com.xuncorp.spw.workshop.api.UnstableSpwWorkshopApi
 import com.xuncorp.spw.workshop.api.WorkshopApi
-import com.xuncorp.spw.workshop.api.config.ConfigHelper
 import java.awt.event.KeyEvent
-import java.util.function.Consumer
 import javax.swing.SwingUtilities
 
 /**
@@ -34,26 +31,12 @@ class SendPlugin(
 
     private var injectionWarningShown = false
 
-    private var appearanceListenerAttached = false
-
-    private val configManager by lazy { WorkshopApi.manager.createConfigManager() }
-
-    private val appearanceListener = Consumer<ConfigHelper> { config ->
-        val value = config.get(KEY_BACKGROUND_STYLE, "auto")
-        SwingUtilities.invokeLater { AppearanceSettings.apply(value) }
-    }
-
     override fun start() {
-        applyAppearanceConfig()
         registerShortcut()
         registerPanelHooks()
     }
 
     override fun stop() {
-        if (appearanceListenerAttached) {
-            runCatching { configManager.removeConfigChangeListener(appearanceListener) }
-            appearanceListenerAttached = false
-        }
         runCatching {
             WorkshopApi.manager.keyBindingManager.unregister(actionId = ACTION_OPEN_PANEL)
         }
@@ -61,18 +44,6 @@ class SendPlugin(
         SwingUtilities.invokeLater {
             SendPanelState.close()
             SendController.shutdown()
-        }
-    }
-
-    /** 读取「背景外观」设置并监听配置页的修改。 */
-    private fun applyAppearanceConfig() {
-        runCatching {
-            val value = configManager.getConfig().get(KEY_BACKGROUND_STYLE, "auto")
-            SwingUtilities.invokeLater { AppearanceSettings.apply(value) }
-            if (!appearanceListenerAttached) {
-                configManager.addConfigChangeListener(appearanceListener)
-                appearanceListenerAttached = true
-            }
         }
     }
 
@@ -148,7 +119,6 @@ class SendPlugin(
 
     companion object {
         private const val ACTION_OPEN_PANEL = "spw-send-open-panel"
-        private const val KEY_BACKGROUND_STYLE = "background.style"
         private const val TARGET_CLASS = "com.xuncorp.voxzen.ui.navigation.AppNavigationKt"
         private const val TARGET_METHOD = "AppNavigation"
 

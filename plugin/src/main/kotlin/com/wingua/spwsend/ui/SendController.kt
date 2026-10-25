@@ -182,6 +182,19 @@ object SendController {
         SendPanelState.close()
     }
 
+    /**
+     * 宿主左侧导航栏被点击。
+     *
+     * 有二级弹窗时先收起弹窗；任务进行中由 [requestClose] 给出提示，不打断同步。
+     */
+    fun onSidebarClick() {
+        when {
+            nameInput != null -> nameInput = null
+            dialog != null -> dialog = null
+            else -> requestClose()
+        }
+    }
+
     private fun stopCore() {
         runCatching { core.stop() }
         serviceRunning = false

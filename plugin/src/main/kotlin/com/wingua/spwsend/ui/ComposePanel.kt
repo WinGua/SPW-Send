@@ -10,7 +10,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -40,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
@@ -48,20 +48,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -82,12 +81,22 @@ import com.moriafly.salt.ui.Text as SaltText
 import com.moriafly.salt.ui.screen.BasicScreen
 import com.wingua.spwsend.core.Mapping
 import com.wingua.spwsend.core.PathUtil
+import java.awt.AWTEvent
+import java.awt.Component
+import java.awt.Frame
+import java.awt.KeyboardFocusManager
+import java.awt.Toolkit
+import java.awt.Window
+import java.awt.event.AWTEventListener
+import java.awt.event.MouseEvent
+import javax.swing.RootPaneContainer
+import javax.swing.SwingUtilities
 
 /**
  * 宿主导航根组件之后追加的全屏页面。
  *
  * 页面沿用宿主的标题栏样式（56dp 返回按钮行）与字体；
- * 背景按外观设置选择壁纸磨砂或经典实色，不接管宿主导航。
+ * 背景自动跟随宿主窗口材质，不接管宿主导航。
  * 不创建任何 AWT 窗口。
  */
 @Composable
@@ -96,13 +105,14 @@ fun SendOverlay() {
     val appearance = remember { HostAppearanceReader.read() }
     val systemDark = remember { readSystemDarkTheme() }
     val dark = appearance.dark ?: systemDark
-    val style = AppearanceSettings.backgroundStyle
-    val glass = BackgroundStyle.usesGlass(style, appearance.windowStyle)
-    val wallpaper = remember(glass) {
-        if (glass) Wallpaper.load() else null
+    val tier = remember(appearance.windowStyle) {
+        MaterialTier.fromWindowStyle(appearance.windowStyle)
     }
-    val palette = remember(dark, glass) {
-        hostPalette(dark, glass)
+    val wallpaperColor = remember(tier) {
+        if (tier == MaterialTier.Classic) null else WallpaperPalette.averageColor()
+    }
+    val palette = remember(dark, tier, wallpaperColor) {
+        hostPalette(dark, tier, wallpaperColor)
     }
     val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
         HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
@@ -114,6 +124,16 @@ fun SendOverlay() {
         paragraph = baseStyles.paragraph.copy(fontFamily = hostFont),
         largeTitle = baseStyles.largeTitle.copy(fontFamily = hostFont)
     )
+    val panelBounds = remember { PanelBounds() }
+    val hostWindow = remember { resolveHostWindow() }
+    DisposableEffect(hostWindow) {
+        val window = hostWindow ?: return@DisposableEffect onDispose { }
+        val listener = AWTEventListener { event ->
+            handleHostMousePress(event, window, panelBounds)
+        }
+        Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.MOUSE_EVENT_MASK)
+        onDispose { Toolkit.getDefaultToolkit().removeAWTEventListener(listener) }
+    }
     SaltTheme(
         configs = SaltConfigs.default(dark),
         dynamicColors = SaltDynamicColors(light = palette, dark = palette),
@@ -123,69 +143,96 @@ fun SendOverlay() {
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Transparent)
+                .onGloballyPositioned {
+                    val origin = it.positionInRoot()
+                    panelBounds.rect = Rect(
+                        origin.x,
+                        origin.y,
+                        origin.x + it.size.width,
+                        origin.y + it.size.height
+                    )
+                }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) { }
         ) {
-            BackgroundLayer(
-                glass = glass,
-                dark = dark,
-                wallpaper = wallpaper,
-                solidColor = palette.background
-            )
+            BackgroundLayer(dark = dark, tier = tier, color = palette.background)
             SendPanel()
             DialogLayer()
         }
     }
 }
 
+/** 面板在宿主内容区内的矩形，供窗口级点击判定使用。 */
+private class PanelBounds {
+    @Volatile
+    var rect: Rect = Rect(0f, 0f, 0f, 0f)
+}
+
+/** 宿主主窗口：优先取当前活动窗口，退回最后一个可见 Frame。 */
+private fun resolveHostWindow(): Window? =
+    KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+        ?: Window.getWindows().filterIsInstance<Frame>().lastOrNull { it.isShowing }
+
 /**
- * 页面背景：优先壁纸磨砂（跟随宿主或磨砂玻璃），其次渐变，最后实色。
+ * 只处理宿主窗口内的鼠标按下。
+ *
+ * 判定条件：点击点位于面板矩形左侧、且不低于面板顶边，
+ * 即只覆盖宿主左侧导航栏；播放条、标题栏和面板内部都不触发。
+ */
+private fun handleHostMousePress(event: AWTEvent, window: Window, bounds: PanelBounds) {
+    if (event !is MouseEvent || event.id != MouseEvent.MOUSE_PRESSED) return
+    val source = event.component as? Component ?: return
+    val owner = generateSequence(source) { it.parent as? Component }
+        .filterIsInstance<Window>()
+        .firstOrNull() ?: return
+    if (owner !== window) return
+    val target = (window as? RootPaneContainer)?.contentPane ?: window
+    val point = SwingUtilities.convertPoint(source, event.point, target)
+    val rect = bounds.rect
+    if (rect.width <= 0f || rect.height <= 0f) return
+    if (point.x < rect.left && point.y >= rect.top) {
+        SendController.onSidebarClick()
+    }
+}
+
+/**
+ * 页面背景：材质底色 + 极弱方向性渐变。
+ *
+ * 不绘制壁纸图片，只在亚克力档额外叠加一层柔和亮度，模拟桌面色透过感。
  */
 @Composable
-private fun BackgroundLayer(
-    glass: Boolean,
-    dark: Boolean,
-    wallpaper: ImageBitmap?,
-    solidColor: Color
-) {
-    Box(Modifier.fillMaxSize()) {
-        when {
-            wallpaper != null -> {
-                Image(
-                    bitmap = wallpaper,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .blur(radius = 64.dp)
+private fun BackgroundLayer(dark: Boolean, tier: MaterialTier, color: Color) {
+    Box(Modifier.fillMaxSize().background(color)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = if (dark) 0.02f else 0.05f),
+                            Color.Transparent,
+                            Color.Black.copy(alpha = if (dark) 0.05f else 0.012f)
+                        )
+                    )
                 )
-                Box(Modifier.fillMaxSize().background(glassTint(dark)))
-            }
-
-            glass -> GradientBackground(dark)
-
-            else -> Box(Modifier.fillMaxSize().background(solidColor))
+        )
+        if (tier == MaterialTier.Acrylic) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = if (dark) 0.05f else 0.09f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
         }
     }
-}
-
-/** 壁纸上的磨砂色调层，兼顾通透与文字对比度。 */
-private fun glassTint(dark: Boolean): Color = if (dark) {
-    Color(0xFF161C28).copy(alpha = 0.55f)
-} else {
-    Color(0xFFF4F4F6).copy(alpha = 0.68f)
-}
-
-@Composable
-private fun GradientBackground(dark: Boolean) {
-    val colors = if (dark) {
-        listOf(Color(0xFF2B2B31), Color(0xFF1E1E22))
-    } else {
-        listOf(Color(0xFFF9F9FC), Color(0xFFEDEDF3))
-    }
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(colors)))
 }
 
 @Composable
@@ -296,13 +343,11 @@ private fun StatusIndicator() {
 @Composable
 private fun LocalInfoPanelCard() {
     val appearance = remember { HostAppearanceReader.read() }
-    val glass = BackgroundStyle.usesGlass(
-        AppearanceSettings.backgroundStyle,
-        appearance.windowStyle
-    )
+    val tier = MaterialTier.fromWindowStyle(appearance.windowStyle)
     val materialLabel = buildString {
         append(appearance.windowStyle ?: "未知")
-        append(if (glass) " · 磨砂玻璃" else " · 经典纯色")
+        append(" · ")
+        append(tier.label)
     }
     PanelCard(modifier = Modifier.fillMaxWidth()) {
         Column(

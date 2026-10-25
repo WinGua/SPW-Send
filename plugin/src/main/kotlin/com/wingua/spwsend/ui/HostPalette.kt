@@ -2,51 +2,92 @@ package com.wingua.spwsend.ui
 
 import androidx.compose.ui.graphics.Color
 import com.moriafly.salt.ui.SaltColors
-import java.util.Locale
+import java.awt.Color as AwtColor
+import kotlin.math.min
 
-/** 宿主「椒盐经典」等无 DWM 材质的窗口样式值。 */
-private val SOLID_WINDOW_STYLES = setOf("none", "classic", "经典", "椒盐经典")
+/**
+ * 面板底色。
+ *
+ * 以主题底色为主，按材质档掺入壁纸主色的不同比例：
+ * 云母只带一点色调，亚克力保留更多桌面颜色，经典纯色完全不掺。
+ */
+internal fun panelBackground(dark: Boolean, tier: MaterialTier, wallpaper: Color?): Color {
+    val base = if (dark) Color(0xFF202024) else Color(0xFFF5F5F7)
+    val ratio = when (tier) {
+        MaterialTier.Classic -> 0f
+        MaterialTier.Mica -> 0.12f
+        MaterialTier.MicaAlt -> 0.17f
+        MaterialTier.Acrylic -> 0.38f
+        MaterialTier.Unknown -> 0.12f
+    }
+    if (wallpaper == null || ratio == 0f) return base
 
-internal fun isSolidWindowStyle(hostStyle: String?): Boolean {
-    val normalized = hostStyle?.trim()?.lowercase(Locale.ROOT) ?: return false
-    return normalized in SOLID_WINDOW_STYLES
+    val blended = blend(base, normalizeTint(wallpaper, dark, tier), ratio)
+    return if (tier == MaterialTier.MicaAlt) {
+        blend(blended, if (dark) Color.Black else Color(0xFFE6E6EB), 0.07f)
+    } else {
+        blended
+    }
+}
+
+/** 把壁纸主色收进材质允许的饱和度与亮度区间。 */
+private fun normalizeTint(color: Color, dark: Boolean, tier: MaterialTier): Color {
+    val maxSaturation = when (tier) {
+        MaterialTier.Acrylic -> 0.34f
+        MaterialTier.MicaAlt -> 0.16f
+        else -> 0.12f
+    }
+    val hsb = FloatArray(3)
+    AwtColor.RGBtoHSB(
+        (color.red * 255f).toInt().coerceIn(0, 255),
+        (color.green * 255f).toInt().coerceIn(0, 255),
+        (color.blue * 255f).toInt().coerceIn(0, 255),
+        hsb,
+    )
+    hsb[1] = min(hsb[1], maxSaturation)
+    hsb[2] = if (dark) hsb[2].coerceIn(0.12f, 0.32f) else hsb[2].coerceIn(0.55f, 0.90f)
+    return Color(AwtColor.HSBtoRGB(hsb[0], hsb[1], hsb[2]))
+}
+
+private fun blend(base: Color, tint: Color, fraction: Float): Color {
+    val f = fraction.coerceIn(0f, 1f)
+    return Color(
+        base.red + (tint.red - base.red) * f,
+        base.green + (tint.green - base.green) * f,
+        base.blue + (tint.blue - base.blue) * f,
+        base.alpha,
+    )
 }
 
 /**
  * 面板配色。
  *
- * [glass] 为 true 时用于磨砂壁纸背景：卡片使用冷白半透明叠加，让壁纸参与合成；
- * 否则使用与宿主经典主题一致的实色。
+ * 材质档只决定底色与卡片透明度，卡片本身固定为半透明白 / 黑叠加，
+ * 不再随背景颜色漂移，保证文字对比度稳定。
  */
-internal fun hostPalette(dark: Boolean, glass: Boolean): SaltColors {
+internal fun hostPalette(dark: Boolean, tier: MaterialTier, wallpaper: Color?): SaltColors {
     val base = if (dark) SaltColors.defaultDark() else SaltColors.defaultLight()
-    if (glass) {
-        return if (dark) {
-            base.copy(
-                background = Color(0xFF202024),
-                subBackground = Color(0xFFE3EAF6).copy(alpha = 0.08f),
-                popup = Color(0xFF2A2A2A),
-                text = Color(0xFFEBEEF1),
-                subText = Color(0xFFCCD0D5),
-                stroke = Color(0xFFD7E3F5).copy(alpha = 0.12f)
-            )
-        } else {
-            base.copy(
-                background = Color(0xFFF5F5F7),
-                subBackground = Color.White.copy(alpha = 0.58f),
-                popup = Color(0xFFFCFCFC),
-                text = Color(0xFF25272B),
-                subText = Color(0xFF5F636B),
-                stroke = Color.Black.copy(alpha = 0.08f)
-            )
-        }
+    if (tier == MaterialTier.Classic) {
+        return base.copy(
+            background = if (dark) Color(0xFF232323) else Color(0xFFF8F8F8),
+            subBackground = if (dark) Color(0xFF2A2A2A) else Color(0xFFFCFCFC),
+            popup = if (dark) Color(0xFF2A2A2A) else Color(0xFFFCFCFC),
+            text = if (dark) Color(0xFFEDEDEE) else Color(0xFF25272B),
+            subText = if (dark) Color(0xFFA0A3AB) else Color(0xFF777B82),
+            stroke = if (dark) Color(0xFF37393E) else Color(0xFFE9EAED),
+        )
+    }
+
+    val cardAlpha = when (tier) {
+        MaterialTier.Acrylic -> if (dark) 0.14f else 0.56f
+        else -> if (dark) 0.10f else 0.72f
     }
     return base.copy(
-        background = if (dark) Color(0xFF232323) else Color(0xFFF8F8F8),
-        subBackground = if (dark) Color(0xFF2A2A2A) else Color(0xFFFCFCFC),
+        background = panelBackground(dark, tier, wallpaper),
+        subBackground = Color.White.copy(alpha = cardAlpha),
         popup = if (dark) Color(0xFF2A2A2A) else Color(0xFFFCFCFC),
-        text = if (dark) Color(0xFFEDEDEE) else Color(0xFF25272B),
-        subText = if (dark) Color(0xFFA0A3AB) else Color(0xFF777B82),
-        stroke = if (dark) Color(0xFF37393E) else Color(0xFFE9EAED)
+        text = if (dark) Color(0xFFEBEEF1) else Color(0xFF25272B),
+        subText = if (dark) Color(0xFFCCD0D5) else Color(0xFF5F636B),
+        stroke = if (dark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f),
     )
 }
