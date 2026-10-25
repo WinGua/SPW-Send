@@ -341,20 +341,8 @@ private fun InfoRow(
     action: String? = null,
     onClick: (() -> Unit)? = null
 ) {
-    val rowModifier = if (onClick == null) {
-        Modifier.fillMaxWidth()
-    } else {
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            )
-    }
     Row(
-        modifier = rowModifier.padding(vertical = 2.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         PanelText(
@@ -370,9 +358,9 @@ private fun InfoRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        if (action != null) {
-            Spacer(Modifier.width(6.dp))
-            PanelText(action, style = PanelSub, color = panelColors.highlight)
+        if (action != null && onClick != null) {
+            Spacer(Modifier.width(8.dp))
+            PanelButton(onClick = onClick, text = action, type = PanelButtonType.Sub)
         }
     }
 }
