@@ -11,7 +11,14 @@ import kotlin.math.min
  * 以主题底色为主，按材质档掺入壁纸主色的不同比例：
  * 云母只带一点色调，亚克力保留更多桌面颜色，经典纯色完全不掺。
  */
-internal fun panelBackground(dark: Boolean, tier: MaterialTier, wallpaper: Color?): Color {
+internal fun panelBackground(
+    dark: Boolean,
+    tier: MaterialTier,
+    wallpaper: Color?,
+    sampled: Color? = null,
+): Color {
+    // 屏幕采样拿到的是宿主已合成好的真实材质色，优先级最高。
+    if (sampled != null) return sampled
     val base = if (dark) Color(0xFF202024) else Color(0xFFF5F5F7)
     val ratio = when (tier) {
         MaterialTier.Classic -> 0f
@@ -65,7 +72,12 @@ private fun blend(base: Color, tint: Color, fraction: Float): Color {
  * 材质档只决定底色与卡片透明度，卡片本身固定为半透明白 / 黑叠加，
  * 不再随背景颜色漂移，保证文字对比度稳定。
  */
-internal fun hostPalette(dark: Boolean, tier: MaterialTier, wallpaper: Color?): SaltColors {
+internal fun hostPalette(
+    dark: Boolean,
+    tier: MaterialTier,
+    wallpaper: Color?,
+    sampled: Color? = null,
+): SaltColors {
     val base = if (dark) SaltColors.defaultDark() else SaltColors.defaultLight()
     if (tier == MaterialTier.Classic) {
         return base.copy(
@@ -80,7 +92,7 @@ internal fun hostPalette(dark: Boolean, tier: MaterialTier, wallpaper: Color?): 
 
     // 卡片只比底色亮约 8~10 级，与宿主的层级关系一致；亚克力不再额外提亮。
     val cardAlpha = if (dark) 0.05f else if (tier == MaterialTier.Acrylic) 0.56f else 0.72f
-    val background = panelBackground(dark, tier, wallpaper)
+    val background = panelBackground(dark, tier, wallpaper, sampled)
     val popup = blend(background, Color.White, if (dark) 0.10f else 0.45f)
     return base.copy(
         background = background,

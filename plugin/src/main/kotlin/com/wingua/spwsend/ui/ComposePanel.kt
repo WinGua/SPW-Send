@@ -112,8 +112,10 @@ fun SendOverlay() {
     val wallpaperColor = remember(tier) {
         if (tier == MaterialTier.Classic) null else WallpaperPalette.averageColor()
     }
-    val palette = remember(dark, tier, wallpaperColor) {
-        hostPalette(dark, tier, wallpaperColor)
+    var sampledBase by remember { mutableStateOf<Color?>(null) }
+    var sampledTried by remember { mutableStateOf(false) }
+    val palette = remember(dark, tier, wallpaperColor, sampledBase) {
+        hostPalette(dark, tier, wallpaperColor, sampledBase)
     }
     val hostFont = remember(appearance.fontStrategy, appearance.customFontFilePath) {
         HostFont.load(appearance.fontStrategy, appearance.customFontFilePath)
@@ -152,6 +154,10 @@ fun SendOverlay() {
                         origin.x + it.size.width,
                         origin.y + it.size.height
                     )
+                    if (!sampledTried) {
+                        sampledTried = true
+                        sampledBase = HostSurfaceSampler.sample(hostWindow, panelBounds.rect)
+                    }
                 }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
