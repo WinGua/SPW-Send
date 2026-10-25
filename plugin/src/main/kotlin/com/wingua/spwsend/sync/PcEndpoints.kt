@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 不接受 /v2/upload（同步方向固定为 PC → Android）。
  */
 class PcEndpoints(
-    private val session: String,
+    private val sessionProvider: () -> String,
     private val configProvider: () -> Config,
     private val busyProvider: () -> Boolean,
     private val onPeerDisconnected: (String) -> Unit,
@@ -82,7 +82,7 @@ class PcEndpoints(
                 "app" to Constants.APP_ID,
                 "version" to Constants.APP_VERSION,
                 "minPeer" to Constants.MIN_PEER,
-                "session" to session,
+                "session" to sessionProvider(),
                 "device" to Json.obj(
                     "id" to config.deviceId,
                     "name" to config.deviceName,
@@ -119,7 +119,7 @@ class PcEndpoints(
             Json.obj(
                 "ok" to true,
                 "token" to token,
-                "session" to session,
+                "session" to sessionProvider(),
                 "device" to Json.obj(
                     "id" to config.deviceId,
                     "name" to config.deviceName,

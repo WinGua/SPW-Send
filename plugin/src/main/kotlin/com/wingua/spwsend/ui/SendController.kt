@@ -40,7 +40,7 @@ data class PanelDialog(
 )
 
 /** 名称输入的用途。 */
-enum class NameInputMode { Mapping, Device }
+enum class NameInputMode { Mapping, Device, Port }
 
 /** 名称输入弹窗。 */
 data class NameInput(
@@ -394,6 +394,21 @@ object SendController {
         )
     }
 
+    /** 编辑 HTTP 服务端口，保存后重启局域网服务。 */
+    fun beginEditPort() {
+        if (actionLocked || core.busy) {
+            dialog = PanelDialog("请稍候", "正在连接、对比或同步，暂时不能修改端口。", false)
+            return
+        }
+        nameInput = NameInput(
+            title = "修改服务端口",
+            label = "端口号（1024–65535，保存后重启服务）",
+            path = "",
+            value = core.config.port.toString(),
+            mode = NameInputMode.Port
+        )
+    }
+
     fun deleteCurrentMapping() {
         if (core.busy || syncActive || compareActive) {
             dialog = PanelDialog("请稍候", "正在对比或同步，暂时不能修改映射。", false)
@@ -432,8 +447,54 @@ object SendController {
         val name = input.value.trim()
         if (name.isEmpty()) {
             nameInput = input.copy(
-                error = if (input.mode == NameInputMode.Device) "请填写设备名称" else "请填写映射名称"
+                error = when (input.mode) {
+                    NameInputMode.Device -> "请填写设备名称"
+                    NameInputMode.Port -> "请填写端口号"
+                    NameInputMode.Mapping -> "请填写映射名称"
+                }
             )
+            return
+        }
+        if (input.mode == NameInputMode.Port) {
+            val port = name.toIntOrNull()
+            if (port == null || port < 1024 || port > 65535) {
+                nameInput = input.copy(error = "请输入 1024–65535 之间的端口号")
+                return
+            }
+            if (port == core.config.port) {
+                nameInput = null
+                status = "端口未变化"
+                return
+            }
+            nameInput = null
+            status = "正在切换端口…"
+            executor.execute {
+                runCatching { core.updatePort(port) }
+                post {
+                    refreshFromCore()
+                    val actual = core.actualPort
+                    when {
+                        actual == port -> status = "服务端口已切换为 $port"
+                        actual > 0 -> {
+                            status = "端口 $port 被占用，已改用 $actual"
+                            dialog = PanelDialog(
+                                "端口已占用",
+                                "端口 $port 无法监听，已改用系统分配的端口 $actual。",
+                                false
+                            )
+                        }
+
+                        else -> {
+                            status = "端口切换失败"
+                            dialog = PanelDialog(
+                                "端口切换失败",
+                                core.startupError ?: "服务未能重新启动。",
+                                false
+                            )
+                        }
+                    }
+                }
+            }
             return
         }
         if (input.mode == NameInputMode.Device) {

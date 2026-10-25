@@ -40,8 +40,14 @@ class ConfigStore {
         }
         val data = runCatching { Json.parse(file.readText(Charsets.UTF_8)).asMap() }
             .getOrDefault(emptyMap())
-        val port = data.intValue("port").let {
-            if (it in 1024..65535) it else Constants.DEFAULT_HTTP_PORT
+        val storedPort = data.intValue("port")
+        val needsMigration = data.intValue("configVersion") < Constants.CONFIG_VERSION
+        val port = if (needsMigration && storedPort == Constants.LEGACY_HTTP_PORT) {
+            Constants.DEFAULT_HTTP_PORT
+        } else if (storedPort in 1024..65535) {
+            storedPort
+        } else {
+            Constants.DEFAULT_HTTP_PORT
         }
         val mappings = data["mappings"].asList().mapNotNull { item ->
             val m = item.asMap()
@@ -56,8 +62,8 @@ class ConfigStore {
             port = port,
             mappings = mappings
         )
-        // 文件损坏或缺少设备 id 时立即回写，保证设备身份跨重启稳定。
-        if (data.str("deviceId").isEmpty()) save(config)
+        // 文件损坏、缺少设备 id 或需要迁移旧端口时立即回写，保证下次启动读到稳定配置。
+        if (data.str("deviceId").isEmpty() || needsMigration) save(config)
         return config
     }
 
@@ -66,6 +72,7 @@ class ConfigStore {
         try {
             if (!dir.exists()) dir.mkdirs()
             val payload = Json.obj(
+                "configVersion" to Constants.CONFIG_VERSION,
                 "deviceId" to config.deviceId,
                 "deviceName" to config.deviceName,
                 "port" to config.port,

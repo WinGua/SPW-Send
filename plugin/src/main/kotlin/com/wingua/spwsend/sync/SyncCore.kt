@@ -61,7 +61,10 @@ class SyncCore(
     var config: Config = configStore.load()
         private set
 
-    val session: String = randomHex(16)
+    /** 本次会话标识；每次启动服务（含端口切换）重新生成，通知对端旧 token 失效。 */
+    @Volatile
+    var session: String = randomHex(16)
+        private set
 
     @Volatile
     var onChanged: (() -> Unit)? = null
@@ -76,7 +79,7 @@ class SyncCore(
     private val inboundPeers = ConcurrentHashMap.newKeySet<String>()
 
     private val endpoints = PcEndpoints(
-        session = session,
+        sessionProvider = { session },
         configProvider = { config },
         busyProvider = { busy },
         onPeerDisconnected = { id ->
@@ -136,6 +139,7 @@ class SyncCore(
         if (server != null) return
         startupError = null
         busy = false
+        session = randomHex(16)
 
         val http = HttpServerLite { request -> endpoints.handle(request) }
         try {
@@ -215,6 +219,17 @@ class SyncCore(
     fun updateDeviceName(name: String) {
         config = config.copy(deviceName = name)
         configStore.save(config)
+        notifyChanged()
+    }
+
+    /** 切换 HTTP 服务端口；立即重启服务，并生成新会话使双方旧 token 失效。 */
+    @Synchronized
+    fun updatePort(port: Int) {
+        if (port !in 1024..65535) return
+        config = config.copy(port = port)
+        configStore.save(config)
+        stop()
+        start()
         notifyChanged()
     }
 

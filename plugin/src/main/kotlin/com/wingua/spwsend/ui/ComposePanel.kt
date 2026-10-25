@@ -316,7 +316,12 @@ private fun LocalInfoPanelCard() {
                 action = "修改",
                 onClick = { SendController.beginEditDeviceName() }
             )
-            InfoRow("端口", if (SendController.port > 0) SendController.port.toString() else "未监听")
+            InfoRow(
+                label = "端口",
+                value = if (SendController.port > 0) SendController.port.toString() else "未监听",
+                action = "修改",
+                onClick = { SendController.beginEditPort() }
+            )
             InfoRow("会话", SendController.session.take(8))
             InfoRow("材质", materialLabel)
             Spacer(Modifier.height(2.dp))
@@ -831,8 +836,8 @@ private fun MessagePanelCard(dialog: PanelDialog) {
 private fun NameInputPanelCard(input: NameInput) {
     val focusRequester = remember { FocusRequester() }
     // 保留输入法组合状态，避免中文候选提交后拼音残留在两侧。
-    var fieldValue by remember(input.path) { mutableStateOf(TextFieldValue(input.value)) }
-    LaunchedEffect(input.path) {
+    var fieldValue by remember(input.mode, input.path) { mutableStateOf(TextFieldValue(input.value)) }
+    LaunchedEffect(input.mode, input.path) {
         runCatching { focusRequester.requestFocus() }
     }
     PanelCard(
