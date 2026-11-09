@@ -13,7 +13,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 
-/** 分片元数据，字段与 MySend 的 `.mysend-part/*.meta` 保持一致。 */
+/** 分片元数据，字段与 MySend 的 `.mysend-part` 元数据保持一致。 */
 data class PartMeta(
     val path: String,
     val size: Long,
