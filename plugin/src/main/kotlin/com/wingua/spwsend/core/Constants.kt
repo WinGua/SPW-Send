@@ -18,7 +18,7 @@ object Constants {
     const val INDEX_TIMEOUT_MS = 60_000
     const val MAX_FILE_TIMEOUT_MS = 600_000
     const val APP_ID = "spw-send-mod"
-    const val APP_VERSION = "0.8"
+    const val APP_VERSION = "1.0"
 
     /** 设备名称最大字符数（按 Unicode 码点计）。 */
     const val DEVICE_NAME_MAX = 32

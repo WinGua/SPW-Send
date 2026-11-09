@@ -1,6 +1,6 @@
 # SPW-Send / MySend 同步协议 v2
 
-状态：已定稿，实现中
+状态：已定稿，v1.0 已实现
 
 适用范围：SPW-Send 模组（PC）↔ MySend 安卓端
 
