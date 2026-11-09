@@ -26,7 +26,26 @@ jobs:
 
       - name: 构建 .spmod
         working-directory: plugin
-        run: gradle plugin --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle plugin --no-daemon --stacktrace --console=plain 2>&1 | tee build.log
+
+      # 构建失败时把关键错误写成 Actions 注解，便于在公开检查结果中定位。
+      - name: 输出编译错误
+        if: failure()
+        working-directory: plugin
+        run: |
+          if [ ! -f build.log ]; then
+            exit 0
+          fi
+          errors=$(grep -E '^e: |^FAILURE:|What went wrong|^error:' build.log | head -40 || true)
+          if [ -z "$errors" ]; then
+            exit 0
+          fi
+          printf '%s\n' "$errors" | while IFS= read -r line; do
+            clean=$(printf '%s' "$line" | sed -E 's/\x1B\[[0-9;]*[mK]//g')
+            echo "::error::$clean"
+          done
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
