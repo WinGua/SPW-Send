@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "com.wingua.spwsend"
-version = "0.7"
+version = "0.8"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
@@ -49,7 +49,7 @@ spmod {
     PluginClass = "com.wingua.spwsend.SendPlugin"
     PluginId = "com.wingua.spwsend"
     PluginName = "SPW-Send"
-    PluginDescription = "把电脑上的音乐文件夹单向同步到 MySend 安卓端"
+    PluginDescription = "在电脑与 MySend 安卓端之间双向同步新增文件"
     PluginVersion = project.version.toString()
     PluginProvider = "WinGua"
     PluginHasConfig = true

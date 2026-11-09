@@ -18,13 +18,17 @@ object Constants {
     const val INDEX_TIMEOUT_MS = 60_000
     const val MAX_FILE_TIMEOUT_MS = 600_000
     const val APP_ID = "spw-send-mod"
-    const val APP_VERSION = "0.7"
+    const val APP_VERSION = "0.8"
 
     /** 设备名称最大字符数（按 Unicode 码点计）。 */
     const val DEVICE_NAME_MAX = 32
     const val MIN_PEER = 1
     const val PART_DIR = ".mysend-part"
+    const val PART_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
     const val LOG_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
+
+    /** 同步日志可能包含整个目录的文件名清单，放宽到 8 MB。 */
+    const val LOG_MAX_BYTES = 8 * 1024 * 1024
 
     /** MySend 协议头。 */
     const val HEADER_PROTO = "X-MySend-Proto"

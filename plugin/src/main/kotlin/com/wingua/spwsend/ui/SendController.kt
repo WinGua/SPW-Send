@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wingua.spwsend.core.ConfigStore
 import com.wingua.spwsend.core.Constants
-import com.wingua.spwsend.core.LocalFile
 import com.wingua.spwsend.core.LogStore
 import com.wingua.spwsend.core.Mapping
 import com.wingua.spwsend.core.PathUtil
@@ -13,6 +12,7 @@ import com.wingua.spwsend.core.SyncLog
 import com.wingua.spwsend.net.Peer
 import com.wingua.spwsend.sync.CompareResult
 import com.wingua.spwsend.sync.SyncCore
+import com.wingua.spwsend.sync.SyncDirection
 import com.wingua.spwsend.sync.SyncOutcome
 import java.io.File
 import java.util.UUID
@@ -99,7 +99,7 @@ object SendController {
     var pending by mutableStateOf<CompareResult?>(null)
         private set
 
-    var resultText by mutableStateOf("选择映射并点击「对比」，这里会列出手机端尚不存在的新增文件。")
+    var resultText by mutableStateOf("选择映射并点击「对比」，这里会列出将发送与将接收的新增文件。")
         private set
 
     var logs by mutableStateOf<List<String>>(emptyList())
@@ -109,6 +109,10 @@ object SendController {
         private set
 
     var syncActive by mutableStateOf(false)
+        private set
+
+    /** 手机正在向本机推送文件。 */
+    var inboundActive by mutableStateOf(false)
         private set
 
     var actionPeerId by mutableStateOf<String?>(null)
@@ -130,7 +134,7 @@ object SendController {
         get() = peers.any { it.connected }
 
     val actionLocked: Boolean
-        get() = compareActive || syncActive || actionPeerId != null
+        get() = compareActive || syncActive || inboundActive || actionPeerId != null
 
     val currentMappingName: String?
         get() = currentMapping()?.name
@@ -160,6 +164,7 @@ object SendController {
         port = 0
         compareActive = false
         syncActive = false
+        inboundActive = false
         actionPeerId = null
         pending = null
         peers = emptyList()
@@ -168,12 +173,12 @@ object SendController {
         status = "已关闭"
     }
 
-    /** 关闭面板：同步或对比进行中时不允许关闭。 */
+    /** 关闭面板：同步、对比或手机推送进行中时不允许关闭。 */
     fun requestClose() {
-        if (syncActive || compareActive || core.busy) {
+        if (syncActive || compareActive || inboundActive || core.busy) {
             dialog = PanelDialog(
                 title = "请稍候",
-                message = "正在对比或同步，请等待完成后再关闭面板。",
+                message = "正在对比、同步或接收文件，请等待完成后再关闭面板。",
                 success = false
             )
             return
@@ -204,6 +209,7 @@ object SendController {
         progress = 0f
         peers = emptyList()
         selectedPeerId = null
+        inboundActive = false
         dialog = null
         nameInput = null
         status = "已关闭"
@@ -211,7 +217,7 @@ object SendController {
 
     fun selectMapping(id: String) {
         if (id == selectedMappingId) return
-        if (core.busy || syncActive) return
+        if (core.busy || syncActive || inboundActive) return
         selectedMappingId = id
         pending = null
         progress = 0f
@@ -256,14 +262,14 @@ object SendController {
     }
 
     fun compareNow() {
-        if (compareActive || syncActive || core.busy) return
+        if (compareActive || syncActive || inboundActive || core.busy) return
         val mapping = currentMapping()
         if (mapping == null) {
-            dialog = PanelDialog("尚未配置映射", "请先在左侧新增映射，并选择电脑上的源目录。", false)
+            dialog = PanelDialog("尚未配置映射", "请先在左侧新增映射，并选择电脑上的同步目录。", false)
             return
         }
         if (!File(mapping.sourcePath).isDirectory) {
-            dialog = PanelDialog("源目录不存在", "映射「${mapping.name}」的源目录已不可用，请检查路径。", false)
+            dialog = PanelDialog("同步目录不存在", "映射「${mapping.name}」的同步目录已不可用，请检查路径。", false)
             return
         }
         val peer = connectedPeer()
@@ -285,11 +291,14 @@ object SendController {
                     if (selectedMappingId != mappingId) return@post
                     pending = result
                     resultText = formatCompare(result)
-                    progress = if (result.files.isEmpty()) 1f else 0f
-                    status = if (result.files.isEmpty()) {
-                        "没有新增文件"
-                    } else {
-                        "新增 ${result.files.size} 个文件，共 ${PathUtil.formatBytes(result.totalBytes)}"
+                    progress = if (result.isEmpty) 1f else 0f
+                    status = when {
+                        result.isEmpty -> "两端文件一致"
+                        !result.receiveSupported && result.toReceive.isNotEmpty() ->
+                            "将发送 ${result.toSend.size} 个；对端版本较旧，无法接收 ${result.toReceive.size} 个文件"
+                        else -> "将发送 ${result.toSend.size} 个 · " +
+                            "${PathUtil.formatBytes(result.sendBytes)}；将接收 " +
+                            "${result.toReceive.size} 个 · ${PathUtil.formatBytes(result.receiveBytes)}"
                     }
                 }
             } catch (e: Exception) {
@@ -306,10 +315,21 @@ object SendController {
     }
 
     fun syncNow() {
-        if (compareActive || syncActive || core.busy) return
+        if (compareActive || syncActive || inboundActive || core.busy) return
         val current = pending
-        if (current == null || current.files.isEmpty()) {
+        if (current == null || current.isEmpty) {
             dialog = PanelDialog("无需同步", "请先点击「对比」，确认是否存在新增文件。", false)
+            return
+        }
+        if (current.toSend.isEmpty() && !current.receiveSupported &&
+            current.toReceive.isNotEmpty()
+        ) {
+            dialog = PanelDialog(
+                "对端版本较旧",
+                "当前只能从手机接收文件，但对方的 MySend 版本较旧，无法接收。"
+                    + "请前往 MySend 发布页升级到最新版。",
+                false
+            )
             return
         }
         val peer = connectedPeer()
@@ -318,10 +338,12 @@ object SendController {
             return
         }
 
+        val total = current.toSend.size +
+            (if (current.receiveSupported) current.toReceive.size else 0)
         cancelRequested = false
         syncActive = true
         progress = 0f
-        status = "正在同步 0/${current.files.size}"
+        status = "正在同步 0/$total"
         executor.execute {
             var outcome: SyncOutcome? = null
             var failure: Exception? = null
@@ -329,10 +351,11 @@ object SendController {
                 outcome = core.sync(
                     peer = peer,
                     pending = current,
-                    onProgress = { processed, total, path ->
+                    onProgress = { processed, totalCount, path, direction ->
                         post {
-                            progress = if (total == 0) 0f else processed.toFloat() / total
-                            status = "已处理 $processed/$total · ${shortPath(path, 42)}"
+                            progress = if (totalCount == 0) 0f else processed.toFloat() / totalCount
+                            val label = if (direction == SyncDirection.Send) "发送" else "接收"
+                            status = "$label $processed/$totalCount · ${shortPath(path, 40)}"
                         }
                     },
                     cancelled = { cancelRequested }
@@ -344,10 +367,10 @@ object SendController {
                 syncActive = false
                 pending = null
                 progress = 1f
-                resultText = "同步已完成，点击「对比」可重新检查新增文件。"
-                status = "同步结束"
                 refreshLogs()
                 refreshFromCore()
+                resultText = "同步已完成，点击「对比」可重新检查新增文件。"
+                status = "同步结束"
                 val result = outcome
                 val error = failure
                 dialog = when {
@@ -355,7 +378,7 @@ object SendController {
                     result == null -> PanelDialog("同步失败", "未获取同步结果。", false)
                     result.cancelled -> PanelDialog(
                         "已取消同步",
-                        "已完成 ${result.log.success}/${result.log.total} 个文件。",
+                        syncSummary(result.log),
                         false
                     )
 
@@ -365,9 +388,18 @@ object SendController {
                         false
                     )
 
+                    result.receiveSkipped -> PanelDialog(
+                        "同步完成",
+                        syncSummary(result.log) +
+                            "\n\n对端 MySend 版本较旧，已跳过接收 " +
+                            "${(current.toReceive.size - result.log.receivedCount).coerceAtLeast(0)}" +
+                            " 个文件。请前往 MySend 发布页升级到最新版。",
+                        true
+                    )
+
                     else -> PanelDialog(
                         "同步完成",
-                        "共 ${result.log.success} 个文件，${PathUtil.formatBytes(result.log.bytes)}。",
+                        syncSummary(result.log),
                         true
                     )
                 }
@@ -382,7 +414,7 @@ object SendController {
     }
 
     fun beginAddMapping() {
-        if (core.busy || syncActive) {
+        if (core.busy || syncActive || inboundActive) {
             dialog = PanelDialog("请稍候", "正在同步，暂时不能修改映射。", false)
             return
         }
@@ -423,7 +455,7 @@ object SendController {
     }
 
     fun deleteCurrentMapping() {
-        if (core.busy || syncActive || compareActive) {
+        if (core.busy || syncActive || compareActive || inboundActive) {
             dialog = PanelDialog("请稍候", "正在对比或同步，暂时不能修改映射。", false)
             return
         }
@@ -592,6 +624,15 @@ object SendController {
         port = core.actualPort
         startupError = core.startupError
 
+        val inbound = core.isInboundActive
+        val wasInbound = inboundActive
+        inboundActive = inbound
+        if (inbound && !syncActive && !compareActive) {
+            status = "手机正在推送文件…"
+        } else if (wasInbound && !inbound && !syncActive && !compareActive) {
+            status = "接收结束"
+        }
+
         val connected = snapshot.filter { it.connected }
         if (selectedPeerId == null || connected.none { it.id == selectedPeerId }) {
             selectedPeerId = connected.firstOrNull()?.id
@@ -624,7 +665,7 @@ object SendController {
         val action = Runnable {
             val chooser = JFileChooser().apply {
                 fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                dialogTitle = "选择电脑上的源目录"
+                dialogTitle = "选择电脑上的同步目录"
             }
             if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
                 selected = chooser.selectedFile?.absolutePath
@@ -654,28 +695,59 @@ object SendController {
     private fun formatCompare(result: CompareResult): String {
         val builder = StringBuilder()
         builder.append("映射：").append(result.mapping.name).append('\n')
-        builder.append("新增文件：").append(result.files.size).append(" 个 · ")
-            .append(PathUtil.formatBytes(result.totalBytes)).append("\n\n")
-        if (result.files.isEmpty()) {
-            builder.append("手机端已存在全部文件，无需同步。")
-        } else {
-            val preview = result.files.take(50)
-            for (file: LocalFile in preview) {
-                builder.append("+ ").append(file.relativePath).append('\n')
+        builder.append("将发送：").append(result.toSend.size).append(" 个 · ")
+            .append(PathUtil.formatBytes(result.sendBytes)).append('\n')
+        builder.append("将接收：").append(result.toReceive.size).append(" 个 · ")
+            .append(PathUtil.formatBytes(result.receiveBytes)).append('\n')
+        if (!result.receiveSupported && result.toReceive.isNotEmpty()) {
+            builder.append("注意：对端 MySend 版本较旧，无法接收文件，")
+                .append("请前往 MySend 发布页升级到最新版。\n")
+        }
+        builder.append('\n')
+        if (result.isEmpty) {
+            builder.append("两端文件一致，无需同步。")
+            return builder.toString()
+        }
+        if (result.toSend.isNotEmpty()) {
+            builder.append("↑ 待发送\n")
+            val preview = result.toSend.take(50)
+            for (file in preview) {
+                builder.append("  ").append(file.relativePath).append('\n')
             }
-            if (result.files.size > preview.size) {
-                builder.append("… 其余 ").append(result.files.size - preview.size).append(" 个文件")
+            if (result.toSend.size > preview.size) {
+                builder.append("  … 其余 ").append(result.toSend.size - preview.size)
+                    .append(" 个\n")
             }
         }
-        return builder.toString()
+        if (result.toReceive.isNotEmpty()) {
+            builder.append("↓ 待接收\n")
+            val preview = result.toReceive.take(50)
+            for (file in preview) {
+                builder.append("  ").append(file.relativePath).append('\n')
+            }
+            if (result.toReceive.size > preview.size) {
+                builder.append("  … 其余 ").append(result.toReceive.size - preview.size)
+                    .append(" 个\n")
+            }
+        }
+        return builder.toString().trimEnd()
     }
+
+    private fun syncSummary(log: SyncLog): String =
+        "已发送 ${log.sentCount} 个（${PathUtil.formatBytes(log.sentBytes)}），" +
+            "已接收 ${log.receivedCount} 个（${PathUtil.formatBytes(log.receivedBytes)}）。"
 
     private fun failureText(log: SyncLog): String {
         val builder = StringBuilder()
-        builder.append("成功 ${log.success}/${log.total} 个文件，")
+        builder.append("发送 ${log.sentCount} 个，接收 ${log.receivedCount} 个，")
             .append("失败 ${log.failed} 个。\n\n")
         for (failure in log.failures.take(6)) {
-            builder.append(failure.path).append('\n')
+            val direction = when (failure.direction) {
+                "send" -> "发送 "
+                "recv" -> "接收 "
+                else -> ""
+            }
+            builder.append(direction).append(failure.path).append('\n')
             builder.append("  原因：").append(failure.reason).append('\n')
         }
         if (log.failures.size > 6) {

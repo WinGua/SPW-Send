@@ -57,7 +57,7 @@ jobs:
           gh release delete "${GITHUB_REF_NAME}" --yes || true
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "SPW-Send ${GITHUB_REF_NAME}" \
-            --notes "椒盐音乐模组：电脑 → MySend 安卓端单向音乐同步。安卓端请使用 MySend 发布的 APK。" \
+            --notes "椒盐音乐模组：电脑与 MySend 安卓端双向同步新增文件。安卓端请使用 MySend 发布的最新版 APK。" \
             --latest
 
       # 仓库只保留当前版本：删除其余 Release 并同时清理对应 tag

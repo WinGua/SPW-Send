@@ -2,6 +2,8 @@ package com.wingua.spwsend.net
 
 import com.wingua.spwsend.core.Json
 import com.wingua.spwsend.core.asMap
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.net.HttpURLConnection
@@ -16,6 +18,18 @@ object HttpClientLite {
 
         fun json(): Map<String, Any?> =
             runCatching { Json.parse(text()).asMap() }.getOrDefault(emptyMap())
+    }
+
+    /** 流式下载结果；[body] 仅在非 2xx 时保存错误 JSON。 */
+    data class DownloadResult(
+        val status: Int,
+        val body: ByteArray,
+        val received: Long,
+        val headers: Map<String, String>
+    ) {
+        fun json(): Map<String, Any?> =
+            runCatching { Json.parse(String(body, Charsets.UTF_8)).asMap() }
+                .getOrDefault(emptyMap())
     }
 
     fun get(
@@ -53,6 +67,81 @@ object HttpClientLite {
         readTimeoutMs: Int = 60_000,
         writer: (OutputStream) -> Unit
     ): Result = execute("POST", host, port, path, query, headers, null, length, readTimeoutMs, writer)
+
+    /**
+     * 流式下载到 [target]。
+     *
+     * - [rangeStart] 大于 0 时发送 `Range: bytes=n-`
+     * - 仅当对端返回 206 且 [append] 为 true 时追加，否则从 0 覆盖
+     * - 每读一块都会调用 [checkCancelled]，取消时抛出调用方提供的异常
+     */
+    fun download(
+        host: String,
+        port: Int,
+        path: String,
+        query: Map<String, String> = emptyMap(),
+        headers: Map<String, String> = emptyMap(),
+        rangeStart: Long = 0L,
+        readTimeoutMs: Int = 60_000,
+        target: File,
+        append: Boolean,
+        checkCancelled: () -> Unit
+    ): DownloadResult {
+        val url = buildUrl(host, port, path, query)
+        val conn = url.openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 8_000
+            conn.readTimeout = readTimeoutMs.coerceAtLeast(3_000)
+            conn.useCaches = false
+            conn.instanceFollowRedirects = false
+            conn.setRequestProperty("Connection", "close")
+            conn.setRequestProperty("Accept-Encoding", "identity")
+            if (rangeStart > 0) {
+                conn.setRequestProperty("Range", "bytes=$rangeStart-")
+            }
+            for ((k, v) in headers) conn.setRequestProperty(k, v)
+
+            val status = conn.responseCode
+            val responseHeaders = LinkedHashMap<String, String>()
+            for ((key, values) in conn.headerFields) {
+                if (key == null) continue
+                responseHeaders[key.lowercase()] = values.joinToString(", ")
+            }
+            if (status !in 200..299) {
+                val error = try {
+                    conn.errorStream?.use { it.readBytes() } ?: ByteArray(0)
+                } catch (_: Exception) {
+                    ByteArray(0)
+                }
+                return DownloadResult(status, error, 0L, responseHeaders)
+            }
+
+            target.parentFile?.mkdirs()
+            val appendFile = append && status == 206
+            var received = 0L
+            val input = conn.inputStream
+            try {
+                FileOutputStream(target, appendFile).use { out ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        checkCancelled()
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        out.write(buffer, 0, read)
+                        received += read
+                    }
+                    out.flush()
+                }
+            } finally {
+                runCatching { input.close() }
+            }
+            val total = if (appendFile) target.length() else received
+            return DownloadResult(status, ByteArray(0), total, responseHeaders)
+        } finally {
+            conn.disconnect()
+        }
+    }
 
     private fun execute(
         method: String,

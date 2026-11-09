@@ -22,8 +22,10 @@ class HttpRequest(
     val query: Map<String, String>,
     val headers: Map<String, String>,
     private val input: InputStream,
-    private val contentLength: Long
+    val contentLength: Long
 ) {
+    private var consumed: Long = 0L
+
     fun header(name: String): String? = headers[name.lowercase()]
 
     /** 读取请求体（最多 [maxBytes] 字节，防止恶意超大 JSON）。 */
@@ -37,10 +39,43 @@ class HttpRequest(
             if (n < 0) break
             read += n
         }
+        consumed += read
         return if (read == size) buffer else buffer.copyOf(read)
     }
 
     fun bodyText(): String = String(bodyBytes(), Charsets.UTF_8)
+
+    /** 请求体的原始输入流，供大文件上传直接落盘；调用方负责按 [contentLength] 读取。 */
+    fun bodyStream(): InputStream = object : InputStream() {
+        override fun read(): Int {
+            val value = input.read()
+            if (value >= 0) consumed++
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = input.read(buffer, offset, length)
+            if (read > 0) consumed += read
+            return read
+        }
+    }
+
+    /**
+     * 丢弃尚未读取的请求体。
+     *
+     * 上传提前返回（如目标已存在）前调用，避免客户端仍在写数据时连接被重置，
+     * 从而让它能正常读到 409 响应。
+     */
+    fun drainBody() {
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val remaining = contentLength - consumed
+            if (remaining <= 0) break
+            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+            if (read <= 0) break
+            consumed += read
+        }
+    }
 }
 
 /** 服务端返回的响应。 */
@@ -166,6 +201,11 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
                         .getOrDefault(rawPath)
                     val query = parseQuery(rawQuery)
                     val length = headers["content-length"]?.toLongOrNull() ?: 0L
+
+                    // 大文件上传可能长时间没有新数据，单独放宽读超时。
+                    if (method == "POST" && path == "/v2/upload") {
+                        runCatching { s.soTimeout = 300_000 }
+                    }
 
                     val request = HttpRequest(method, path, query, headers, input, length)
                     val response = try {

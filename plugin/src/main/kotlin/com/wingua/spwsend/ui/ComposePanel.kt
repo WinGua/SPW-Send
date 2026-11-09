@@ -254,7 +254,7 @@ private fun SendPanel() {
             onBack = { SendController.requestClose() },
             modifier = Modifier.fillMaxSize(),
             title = "SPW-Send",
-            subtitle = "电脑 → 手机 · 只同步新增文件",
+            subtitle = "电脑 ↔ 手机 · 只同步新增文件",
             toolButtons = { StatusIndicator() }
         ) { padding ->
             if (wide) {
@@ -315,7 +315,9 @@ private fun SendPanel() {
 private fun StatusIndicator() {
     val statusColor = when {
         SendController.startupError != null -> errorColor()
-        SendController.syncActive || SendController.compareActive -> warningColor()
+        SendController.syncActive ||
+            SendController.compareActive ||
+            SendController.inboundActive -> warningColor()
         SendController.serviceRunning -> successColor()
         else -> errorColor()
     }
@@ -323,6 +325,7 @@ private fun StatusIndicator() {
         SendController.startupError != null -> "服务未启动"
         SendController.syncActive -> "同步中 · ${SendController.port}"
         SendController.compareActive -> "对比中 · ${SendController.port}"
+        SendController.inboundActive -> "接收中 · ${SendController.port}"
         SendController.serviceRunning -> "服务在线 · ${SendController.port}"
         else -> "服务未启动"
     }
@@ -499,7 +502,9 @@ private fun MappingSection(modifier: Modifier = Modifier) {
                 PanelButton(
                     onClick = { SendController.beginAddMapping() },
                     text = "新增",
-                    enabled = !SendController.syncActive && !SendController.compareActive,
+                    enabled = !SendController.syncActive &&
+                        !SendController.compareActive &&
+                        !SendController.inboundActive,
                     type = PanelButtonType.Sub
                 )
                 Spacer(Modifier.width(6.dp))
@@ -508,6 +513,7 @@ private fun MappingSection(modifier: Modifier = Modifier) {
                     text = "删除",
                     enabled = !SendController.syncActive &&
                         !SendController.compareActive &&
+                        !SendController.inboundActive &&
                         SendController.currentMappingName != null,
                     type = PanelButtonType.Danger
                 )
@@ -515,7 +521,7 @@ private fun MappingSection(modifier: Modifier = Modifier) {
             Spacer(Modifier.height(8.dp))
             if (mappings.isEmpty()) {
                 PanelText(
-                    "尚未配置映射，点击「新增」选择电脑上的源目录。",
+                    "尚未配置映射，点击「新增」选择电脑上的同步目录。",
                     style = PanelSub,
                     color = panelColors.subText
                 )
@@ -573,10 +579,15 @@ private fun SyncSection() {
     val canCompare = mappings.isNotEmpty() &&
         SendController.hasConnectedPeer &&
         !SendController.compareActive &&
-        !SendController.syncActive
-    val canSync = SendController.pending?.files?.isNotEmpty() == true &&
+        !SendController.syncActive &&
+        !SendController.inboundActive
+    val pending = SendController.pending
+    val canSync = pending != null &&
+        (pending.toSend.isNotEmpty() ||
+            (pending.receiveSupported && pending.toReceive.isNotEmpty())) &&
         !SendController.compareActive &&
-        !SendController.syncActive
+        !SendController.syncActive &&
+        !SendController.inboundActive
 
     PanelCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
@@ -598,7 +609,9 @@ private fun SyncSection() {
                         PanelButton(
                             onClick = { SendController.selectMapping(mapping.id) },
                             text = shortText(mapping.name, 14),
-                            enabled = !SendController.syncActive && !SendController.compareActive,
+                            enabled = !SendController.syncActive &&
+                                !SendController.compareActive &&
+                                !SendController.inboundActive,
                             type = if (selected) {
                                 PanelButtonType.Highlight
                             } else {
@@ -610,7 +623,7 @@ private fun SyncSection() {
             }
             Spacer(Modifier.height(8.dp))
             PanelText(
-                "源目录：${current?.let { shortPath(it.sourcePath, 56) } ?: "未选择"}",
+                "同步目录：${current?.let { shortPath(it.sourcePath, 54) } ?: "未选择"}",
                 style = PanelSub,
                 color = panelColors.subText,
                 maxLines = 1,
@@ -691,45 +704,93 @@ private fun ResultSection(modifier: Modifier = Modifier) {
                     color = panelColors.subText
                 )
 
-                pending.files.isEmpty() -> Column {
+                pending.isEmpty -> Column {
                     PanelText(
                         "映射：${pending.mapping.name}",
                         style = PanelSub,
                         color = panelColors.subText
                     )
                     Spacer(Modifier.height(4.dp))
-                    PanelText("手机端已存在全部文件，无需同步。", style = PanelSub)
+                    PanelText("两端文件一致，无需同步。", style = PanelSub)
                 }
 
                 else -> {
                     PanelText(
-                        "映射：${pending.mapping.name}   新增 ${pending.files.size} 个 · " +
-                            PathUtil.formatBytes(pending.totalBytes),
+                        "映射：${pending.mapping.name}   将发送 ${pending.toSend.size} 个 · " +
+                            PathUtil.formatBytes(pending.sendBytes) + "   将接收 " +
+                            "${pending.toReceive.size} 个 · " +
+                            PathUtil.formatBytes(pending.receiveBytes),
                         style = PanelSub,
                         color = panelColors.subText,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (!pending.receiveSupported && pending.toReceive.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        PanelText(
+                            "对端 MySend 版本较旧，无法接收文件，请前往 MySend 发布页升级到最新版。",
+                            style = PanelSub,
+                            color = warningColor()
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        items(pending.files.take(200)) { file ->
-                            PanelText(
-                                "+ ${file.relativePath}",
-                                style = PanelSub,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        if (pending.files.size > 200) {
+                        if (pending.toSend.isNotEmpty()) {
                             item {
                                 PanelText(
-                                    "… 其余 ${pending.files.size - 200} 个文件",
+                                    "↑ 将发送 ${pending.toSend.size} 个",
                                     style = PanelSub,
-                                    color = panelColors.subText
+                                    fontWeight = FontWeight.Bold
                                 )
+                            }
+                            items(pending.toSend.take(100)) { file ->
+                                PanelText(
+                                    "↑ ${file.relativePath}",
+                                    style = PanelSub,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (pending.toSend.size > 100) {
+                                item {
+                                    PanelText(
+                                        "… 其余 ${pending.toSend.size - 100} 个待发送文件",
+                                        style = PanelSub,
+                                        color = panelColors.subText
+                                    )
+                                }
+                            }
+                        }
+                        if (pending.toReceive.isNotEmpty()) {
+                            if (pending.toSend.isNotEmpty()) {
+                                item { Spacer(Modifier.height(6.dp)) }
+                            }
+                            item {
+                                PanelText(
+                                    "↓ 将接收 ${pending.toReceive.size} 个",
+                                    style = PanelSub,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            items(pending.toReceive.take(100)) { file ->
+                                PanelText(
+                                    "↓ ${file.relativePath}",
+                                    style = PanelSub,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (pending.toReceive.size > 100) {
+                                item {
+                                    PanelText(
+                                        "… 其余 ${pending.toReceive.size - 100} 个待接收文件",
+                                        style = PanelSub,
+                                        color = panelColors.subText
+                                    )
+                                }
                             }
                         }
                     }

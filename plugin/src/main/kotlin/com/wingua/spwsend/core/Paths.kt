@@ -12,6 +12,13 @@ data class LocalFile(
     val file: File
 )
 
+/** 对端索引中的文件条目，只包含协议字段，不持有本地文件句柄。 */
+data class RemoteFile(
+    val relativePath: String,
+    val size: Long,
+    val mtimeMs: Long
+)
+
 /** 路径、过滤与摘要相关工具。 */
 object PathUtil {
 

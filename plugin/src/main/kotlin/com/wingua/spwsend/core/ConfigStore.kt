@@ -5,7 +5,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 
-/** 一组「名称 → 电脑源目录」映射。 */
+/** 一组「名称 → 电脑同步目录」映射。 */
 data class Mapping(
     val id: String,
     val name: String,
