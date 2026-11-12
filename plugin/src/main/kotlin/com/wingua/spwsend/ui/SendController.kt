@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.wingua.spwsend.core.ConfigStore
 import com.wingua.spwsend.core.Constants
+import com.wingua.spwsend.core.Diagnostics
 import com.wingua.spwsend.core.LogStore
 import com.wingua.spwsend.core.Mapping
 import com.wingua.spwsend.core.PathUtil
@@ -61,6 +62,11 @@ object SendController {
 
     private val logStore = LogStore()
     private val core = SyncCore(ConfigStore(), logStore)
+
+    init {
+        Diagnostics.stateProvider = { stateSnapshot() }
+        Diagnostics.configProvider = { configSnapshot() }
+    }
 
     private var executor: ExecutorService = newExecutor()
 
@@ -147,18 +153,25 @@ object SendController {
             core.onChanged = { post { refreshFromCore() } }
         }
         runCatching { core.start() }
+            .onFailure { Diagnostics.record("service", "启动异常: ${it.message}") }
         refreshFromCore()
         refreshLogs()
         cancelRequested = false
         status = core.startupError ?: if (core.isRunning) "服务已就绪" else "服务未启动"
+        Diagnostics.record(
+            "service",
+            "启动 运行=${core.isRunning} 端口=${core.actualPort} 错误=${core.startupError ?: "无"}"
+        )
     }
 
     @Synchronized
     fun shutdown() {
+        Diagnostics.record("service", "关闭")
         listenerAttached = false
         cancelRequested = true
         core.onChanged = null
         runCatching { core.stop() }
+            .onFailure { Diagnostics.record("service", "关闭异常: ${it.message}") }
         executor.shutdownNow()
         serviceRunning = false
         port = 0
@@ -175,6 +188,7 @@ object SendController {
 
     /** 关闭面板：同步、对比或手机推送进行中时不允许关闭。 */
     fun requestClose() {
+        Diagnostics.record("panel", "请求关闭")
         if (syncActive || compareActive || inboundActive || core.busy) {
             dialog = PanelDialog(
                 title = "请稍候",
@@ -223,6 +237,8 @@ object SendController {
         progress = 0f
         resultText = "映射已切换，请重新对比。"
         status = "已选择映射"
+        val mappingName = mappings.firstOrNull { it.id == id }?.name ?: id
+        Diagnostics.record("mapping", "选择 $mappingName")
     }
 
     fun toggleConnection(peerId: String) {
@@ -230,6 +246,7 @@ object SendController {
         val peer = core.peers().firstOrNull { it.id == peerId } ?: return
         actionPeerId = peerId
         val disconnecting = core.isConnected(peer.id)
+        Diagnostics.record("connect", if (disconnecting) "断开 ${peer.name}" else "连接 ${peer.name}")
         status = if (disconnecting) "正在断开…" else "正在连接…"
         executor.execute {
             if (disconnecting) {
@@ -241,7 +258,9 @@ object SendController {
                     refreshFromCore()
                 }
             } else {
-                val ok = runCatching { core.connect(peer) }.getOrDefault(false)
+                val ok = runCatching { core.connect(peer) }
+                    .onFailure { Diagnostics.record("connect", "连接 ${peer.name} 失败: ${it.message}") }
+                    .getOrDefault(false)
                 post {
                     actionPeerId = null
                     if (ok) {
@@ -282,6 +301,7 @@ object SendController {
         progress = 0f
         compareActive = true
         status = "正在对比…"
+        Diagnostics.record("compare", "开始 映射=${mapping.name}")
         val mappingId = mapping.id
         executor.execute {
             try {
@@ -292,6 +312,10 @@ object SendController {
                     pending = result
                     resultText = formatCompare(result)
                     progress = if (result.isEmpty) 1f else 0f
+                    Diagnostics.record(
+                        "compare",
+                        "完成 映射=${result.mapping.name} 发送=${result.toSend.size} 接收=${result.toReceive.size}"
+                    )
                     status = when {
                         result.isEmpty -> "两端文件一致"
                         !result.receiveSupported && result.toReceive.isNotEmpty() ->
@@ -302,6 +326,7 @@ object SendController {
                     }
                 }
             } catch (e: Exception) {
+                Diagnostics.record("compare", "失败 映射=${mapping.name}: ${e.message}")
                 post {
                     compareActive = false
                     if (selectedMappingId != mappingId) return@post
@@ -344,6 +369,10 @@ object SendController {
         syncActive = true
         progress = 0f
         status = "正在同步 0/$total"
+        Diagnostics.record(
+            "sync",
+            "开始 映射=${current.mapping.name} 发送=${current.toSend.size} 接收=${current.toReceive.size}"
+        )
         executor.execute {
             var outcome: SyncOutcome? = null
             var failure: Exception? = null
@@ -362,6 +391,7 @@ object SendController {
                 )
             } catch (e: Exception) {
                 failure = e
+                Diagnostics.record("sync", "异常 映射=${current.mapping.name}: ${e.message}")
             }
             post {
                 syncActive = false
@@ -373,6 +403,15 @@ object SendController {
                 status = "同步结束"
                 val result = outcome
                 val error = failure
+                if (result != null) {
+                    Diagnostics.record(
+                        "sync",
+                        "结束 发送=${result.log.sentCount} 接收=${result.log.receivedCount} " +
+                            "失败=${result.log.failed} 取消=${result.cancelled}"
+                    )
+                } else if (error != null) {
+                    Diagnostics.record("sync", "失败: ${error.message}")
+                }
                 dialog = when {
                     error != null -> PanelDialog("同步失败", error.message ?: "未知错误", false)
                     result == null -> PanelDialog("同步失败", "未获取同步结果。", false)
@@ -409,6 +448,7 @@ object SendController {
 
     fun cancelSync() {
         if (!syncActive) return
+        Diagnostics.record("sync", "请求取消")
         cancelRequested = true
         status = "正在取消…"
     }
@@ -419,6 +459,7 @@ object SendController {
             return
         }
         val dir = pickDirectory() ?: return
+        Diagnostics.record("mapping", "新增 目录=$dir")
         val fallback = File(dir).name.ifEmpty { "音乐" }
         nameInput = NameInput(
             title = "新增映射",
@@ -472,6 +513,7 @@ object SendController {
             confirmText = "删除",
             showCancel = true,
             onConfirm = {
+                Diagnostics.record("mapping", "删除 ${mapping.name}")
                 core.updateMappings(mappings.filterNot { it.id == targetId })
                 selectedMappingId = null
                 pending = null
@@ -513,11 +555,14 @@ object SendController {
             }
             nameInput = null
             status = "正在切换端口…"
+            Diagnostics.record("service", "切换端口 $port")
             executor.execute {
                 runCatching { core.updatePort(port) }
+                    .onFailure { Diagnostics.record("service", "切换端口失败: ${it.message}") }
                 post {
                     refreshFromCore()
                     val actual = core.actualPort
+                    Diagnostics.record("service", "端口结果 期望=$port 实际=$actual")
                     when {
                         actual == port -> status = "服务端口已切换为 $port"
                         actual > 0 -> {
@@ -548,6 +593,7 @@ object SendController {
                 return
             }
             core.updateDeviceName(name)
+            Diagnostics.record("device", "修改名称 $name")
             nameInput = null
             status = "设备名称已更新为「$name」"
             refreshFromCore()
@@ -563,6 +609,7 @@ object SendController {
             sourcePath = input.path
         )
         core.updateMappings(mappings + added)
+        Diagnostics.record("mapping", "添加 ${added.name} -> ${added.sourcePath}")
         selectedMappingId = added.id
         pending = null
         resultText = "映射已新增，请重新对比。"
@@ -585,6 +632,7 @@ object SendController {
             showCancel = true,
             onConfirm = {
                 logStore.clear()
+                Diagnostics.record("log", "清除同步日志")
                 refreshLogs()
                 status = "已清除同步日志"
             }
@@ -691,6 +739,45 @@ object SendController {
         Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "spw-send-task").apply { isDaemon = true }
         }
+
+    /** 崩溃报告使用的状态快照，不包含文件路径。 */
+    private fun stateSnapshot(): String {
+        val config = core.config
+        val peerList = core.peers()
+        val connected = peerList.count { core.isConnected(it.id) }
+        val task = when {
+            syncActive -> "同步中"
+            compareActive -> "对比中"
+            inboundActive -> "接收中"
+            core.busy -> "忙碌"
+            else -> "空闲"
+        }
+        return buildString {
+            appendLine("服务: ${if (core.isRunning) "运行中" else "未运行"}")
+            appendLine("端口: ${core.actualPort}")
+            appendLine("任务: $task")
+            appendLine("设备: ${peerList.size} 个，已连接 $connected")
+            appendLine("映射: ${config.mappings.size} 个，当前 ${currentMapping()?.name ?: "无"}")
+            appendLine("选择设备: ${selectedPeerId ?: "无"}")
+            appendLine("进度: ${(progress * 100).toInt()}%")
+            appendLine("状态文本: $status")
+        }
+    }
+
+    /** 崩溃报告使用的配置摘要，包含映射路径以便定位。 */
+    private fun configSnapshot(): String {
+        val config = core.config
+        return buildString {
+            appendLine("设备名: ${config.deviceName}")
+            appendLine("设备 ID: ${config.deviceId}")
+            appendLine("配置端口: ${config.port}")
+            if (config.mappings.isEmpty()) {
+                appendLine("映射: 无")
+            } else {
+                config.mappings.forEach { appendLine("映射: ${it.name} -> ${it.sourcePath}") }
+            }
+        }
+    }
 
     private fun formatCompare(result: CompareResult): String {
         val builder = StringBuilder()

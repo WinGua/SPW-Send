@@ -2,6 +2,7 @@ package com.wingua.spwsend.sync
 
 import com.wingua.spwsend.core.Constants
 import com.wingua.spwsend.core.Config
+import com.wingua.spwsend.core.Diagnostics
 import com.wingua.spwsend.core.Json
 import com.wingua.spwsend.core.PathUtil
 import com.wingua.spwsend.core.asList
@@ -336,6 +337,7 @@ class PcEndpoints(
             PartStore.discard(root, rel)
             return json(200, Json.obj("ok" to true, "size" to size))
         } catch (e: Exception) {
+            Diagnostics.record("upload", "失败 path=$rel: ${e.message}")
             return if (isNoSpace(e)) {
                 error(507, "NO_SPACE", "目标磁盘空间不足")
             } else {

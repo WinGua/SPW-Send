@@ -276,11 +276,11 @@ private fun SendPanel() {
                     }
                     Spacer(Modifier.width(18.dp))
                     Column(Modifier.weight(1f).fillMaxHeight()) {
-                        SyncSection()
+                        SyncSection(Modifier.fillMaxWidth().weight(1f))
                         Spacer(Modifier.height(12.dp))
                         ResultSection(Modifier.fillMaxWidth().weight(1f))
                         Spacer(Modifier.height(12.dp))
-                        LogSection(Modifier.fillMaxWidth().height(158.dp))
+                        LogSection(Modifier.fillMaxWidth().weight(1f))
                     }
                 }
             } else {
@@ -572,7 +572,7 @@ private fun MappingRow(mapping: Mapping) {
 }
 
 @Composable
-private fun SyncSection() {
+private fun SyncSection(modifier: Modifier = Modifier.fillMaxWidth()) {
     val mappings = SendController.mappings
     val current = mappings.firstOrNull { it.id == SendController.selectedMappingId }
         ?: mappings.firstOrNull()
@@ -589,7 +589,7 @@ private fun SyncSection() {
         !SendController.syncActive &&
         !SendController.inboundActive
 
-    PanelCard(modifier = Modifier.fillMaxWidth()) {
+    PanelCard(modifier = modifier) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             PanelText("同步任务", style = PanelMain, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))

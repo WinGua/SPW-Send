@@ -1,5 +1,6 @@
 package com.wingua.spwsend.net
 
+import com.wingua.spwsend.core.Diagnostics
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -211,6 +212,7 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
                     val response = try {
                         handler(request)
                     } catch (e: Exception) {
+                        Diagnostics.capture(e, Thread.currentThread().name, "http")
                         HttpResponse(
                             status = 500,
                             body = """{"ok":false,"code":"IO_ERROR","message":"${escape(e.message ?: "内部错误")}"}"""

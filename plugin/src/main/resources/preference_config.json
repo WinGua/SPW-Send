@@ -10,6 +10,34 @@
           "summary": "选择同步目录、连接手机、双向对比并同步",
           "arrow_type": "none",
           "on_click": "com.wingua.spwsend.SendPlugin.openPanel"
+        },
+        {
+          "type": "button",
+          "title": "快捷键设置",
+          "summary": "默认 Ctrl+Alt+S；可在宿主「设置 → 快捷键」中修改「打开 / 关闭 SPW-Send 同步面板」",
+          "arrow_type": "none",
+          "on_click": "com.wingua.spwsend.SendPlugin.showShortcutHint"
+        },
+        {
+          "type": "button",
+          "title": "打开诊断目录",
+          "summary": "查看崩溃日志与运行诊断信息，仅保存在本机",
+          "arrow_type": "link",
+          "on_click": "com.wingua.spwsend.SendPlugin.openDiagnostics"
+        },
+        {
+          "type": "button",
+          "title": "导出诊断包",
+          "summary": "打包崩溃日志和反馈模板，便于发送反馈",
+          "arrow_type": "arrow",
+          "on_click": "com.wingua.spwsend.SendPlugin.exportDiagnostics"
+        },
+        {
+          "type": "button",
+          "title": "问题反馈",
+          "summary": "在浏览器打开预填模板的 GitHub Issue 页面",
+          "arrow_type": "link",
+          "on_click": "com.wingua.spwsend.SendPlugin.openFeedback"
         }
       ]
     }
