@@ -133,12 +133,9 @@ class SendPlugin(
                     methodName = TARGET_METHOD,
                     inClass = caller
                 ) { _ ->
-                    try {
-                        SendOverlay()
-                    } catch (t: Throwable) {
-                        Diagnostics.capture(t, Thread.currentThread().name, "compose")
-                        throw t
-                    }
+                    // Compose 编译器不允许在 composable 调用外包裹 try/catch，
+                    // 组合阶段异常由全局未捕获异常处理器记录。
+                    SendOverlay()
                 }
             }.onFailure {
                 Diagnostics.record("hook", "注入失败($caller): ${it.message}")
