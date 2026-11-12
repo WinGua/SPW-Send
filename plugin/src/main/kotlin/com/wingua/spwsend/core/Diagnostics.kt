@@ -26,7 +26,6 @@ object Diagnostics {
     private const val MAX_EXPORT_FILES = 3
     private const val MAX_REPORT_CHARS = 900_000
     private const val FEEDBACK_URL = "https://github.com/WinGua/SPW-Send/issues/new"
-    private const val TEMPLATE_NAME = "反馈模板.md"
 
     private val baseDir = File(System.getProperty("user.home"), ".spw-send")
     private val diagnosticsDir = File(baseDir, "diagnostics")
@@ -150,7 +149,6 @@ object Diagnostics {
         val stamp = LocalDateTime.now().format(stampFormatter)
         val zip = File(exportDir, "spw-send-diagnostics-$stamp.zip")
         ZipOutputStream(zip.outputStream().buffered()).use { out ->
-            addEntry(out, TEMPLATE_NAME, feedbackTemplate())
             addEntry(out, "manifest.txt", buildManifest())
             addEntry(out, "state.txt", buildStateText())
             val sessionText = runCatching {
@@ -372,9 +370,7 @@ object Diagnostics {
 
         ---
 
-        请附上本压缩包一起发送到：
-        https://github.com/WinGua/SPW-Send/issues
-
+        请把导出的诊断包拖入本页附件区。
         分享前请检查 crash 日志中是否包含个人路径。
     """.trimIndent()
 

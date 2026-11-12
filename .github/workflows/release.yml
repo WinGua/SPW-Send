@@ -49,7 +49,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # 只覆盖当前 tag 的同名 Release，随后清理其他所有旧版本
+      # 只覆盖当前 tag 的同名 Release，保留其他历史版本
       - name: 创建 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,33 +57,11 @@ jobs:
           gh release delete "${GITHUB_REF_NAME}" --yes || true
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "SPW-Send ${GITHUB_REF_NAME}" \
-            --notes "椒盐音乐模组：电脑与 MySend 安卓端双向同步新增文件。安卓端请使用 MySend 发布的最新版 APK。" \
+            --notes "椒盐音乐模组：电脑与 MySend 安卓端双向同步新增文件。
+
+- 新增崩溃诊断：配置页可打开诊断目录、导出诊断包、打开预填模板的问题反馈
+- 快捷键设置入口移至插件配置页，默认 Ctrl+Alt+S
+- 右侧同步任务、对比结果、最近同步三栏等分显示
+
+安卓端请使用 MySend 发布的最新版 APK。" \
             --latest
-
-      # 仓库只保留当前版本：删除其余 Release 并同时清理对应 tag
-      # 仅 tag 触发时执行，避免手动从 main 运行时误删当前 Release
-      - name: 清理旧版本
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release list --limit 200 --json tagName --jq '.[].tagName' | while read -r tag; do
-            if [ -z "$tag" ] || [ "$tag" = "${GITHUB_REF_NAME}" ]; then
-              continue
-            fi
-            gh release delete "$tag" --yes --cleanup-tag
-          done
-
-      # 再清理没有 Release 的孤立 tag，确保只保留当前版本
-      - name: 清理残留 tag
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --paginate "/repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/" \
-            --jq '.[].ref' | sed 's#^refs/tags/##' | while read -r tag; do
-            if [ -z "$tag" ] || [ "$tag" = "${GITHUB_REF_NAME}" ]; then
-              continue
-            fi
-            gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag}"
-          done
