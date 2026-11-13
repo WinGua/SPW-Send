@@ -15,8 +15,7 @@
   <img src="https://img.shields.io/badge/host-Salt%20Player-4B8BF5" alt="Host: Salt Player" />
 </p>
 
-> SPW-Send 是 [MySend](https://github.com/WinGua/MySend) 的定制分支，只提供电脑端模组。
-> 安卓端不再单独维护，统一使用 MySend 官方 APK；两端遵循同一套协议 v2。
+> SPW-Send 是 [MySend](https://github.com/WinGua/MySend) 的定制分支，只提供电脑端模组。安卓端统一使用 MySend 官方 APK，两端遵循同一套协议 v2。
 
 ## 组成
 
@@ -25,19 +24,17 @@
 | Salt Player 模组（PC） | `plugin/` | 椒盐音乐 Windows 桌面版 |
 | Android 端 | [WinGua/MySend](https://github.com/WinGua/MySend/releases) | Android 7.0 及以上 |
 
-## 当前状态
+## 功能与状态
 
-**模组端功能已实现，构建走 GitHub Actions。**
+模组端功能已实现，构建走 GitHub Actions：
 
-- 运行时动态定位宿主的 Compose 调用点，适配 SPW 1.19.0 / 1.19.1 及后续重新混淆的版本
-- 协议以 MySend v2 为基准：[docs/PROTOCOL.md](docs/PROTOCOL.md)
-- 模组端：UDP 发现、HTTP 服务、双向目录对比、分片续传收发、SaltUI 内嵌面板
-- 面板背景自动跟随宿主窗口材质（采样宿主侧栏真实颜色），点击左侧导航栏可关闭面板
-- 云端构建：`plugin` 工作流产出 `.spmod`，`release` 工作流在打 tag 时发布 Release
+- 运行时动态定位宿主 Compose 调用点，适配 SPW 1.19.0 / 1.19.1 及后续重新混淆的版本。
+- 提供 UDP 发现、HTTP 服务、双向目录对比、分片续传收发与 SaltUI 内嵌面板；面板材质自动跟随宿主侧栏颜色，点击左侧导航栏可关闭。
+- 协议以 MySend v2 为基准，见 [docs/PROTOCOL.md](docs/PROTOCOL.md)；`plugin` 工作流产出 `.spmod`，`release` 工作流在打 tag 时发布 Release。
 
 ## 构建
 
-代码推送后在 Actions 页面下载 `.spmod`；也可在本地执行：
+代码推送后到 Actions 页面下载 `.spmod`；也可在本地执行：
 
 ```bash
 cd plugin && gradle plugin
@@ -45,39 +42,34 @@ cd plugin && gradle plugin
 
 ## 同步规则
 
-- **双向**：电脑有、手机无 → 电脑发送；手机有、电脑无 → 电脑接收；两端都有 → 跳过
-- **只同步新增**：只按相对路径判断，已存在的文件不覆盖、不校验内容
-- **不处理删除**：任何一端多出的文件都不会被自动清理
-- **先发后收**：点击同步后先推送本机新增，再拉取对端新增
-- **断点续传**：接收走 `.mysend-part` 分片，完成后原子落盘
-- **自动忽略**：任一路径段以 `.` 开头、以 `~$` 开头，或文件名为 `desktop.ini`、`thumbs.db`、`ehthumbs.db`
+- **双向、先发后收**：电脑有、手机无 → 电脑发送；手机有、电脑无 → 电脑接收；两端都有 → 跳过。点击同步后先推送本机新增，再拉取对端新增。
+- **只同步新增**：只按相对路径判断，不覆盖、不校验内容，也不清理任一端多出的文件。
+- **断点续传**：接收走 `.mysend-part` 分片，完成后原子落盘。
+- **自动忽略**：任一路径段以 `.` 或 `~$` 开头，或文件名为 `desktop.ini`、`thumbs.db`、`ehthumbs.db`。
 
-旧版 MySend 没有 `GET /v2/file`，仍可继续单向往手机同步；模组检测到后会提示升级，升级到最新版即可使用双向接收。
+旧版 MySend 没有 `GET /v2/file`，仍可继续单向往手机同步；模组检测到后会提示升级，升级后即可双向接收。
 
 ## 使用方式
 
-1. Android 端安装 [MySend 官方 APK](https://github.com/WinGua/MySend/releases)，为每组映射选择目标文件夹
-2. 在椒盐音乐中打开 / 关闭模组面板（快捷键 `Ctrl+Alt+S` 或配置页按钮；可在宿主「设置 → 快捷键」中修改）
-3. 模组内选择电脑上的同步文件夹，与手机端创建同名映射
-4. 任一端点击「对比」查看「将发送 / 将接收」，再点击「同步」；模组会先推送本机新增，再接收手机新增
+1. Android 端安装 [MySend 官方 APK](https://github.com/WinGua/MySend/releases)，为每组映射选择目标文件夹。
+2. 在椒盐音乐中打开 / 关闭模组面板（快捷键 `Ctrl+Alt+S` 或配置页按钮；可在宿主「设置 → 快捷键」中修改）。
+3. 模组内选择电脑上的同步文件夹，与手机端创建同名映射。
+4. 任一端点击「对比」查看「将发送 / 将接收」，再点击「同步」；模组会先推送本机新增，再接收手机新增。
 
 ## 诊断与反馈
 
-插件配置页提供「打开诊断目录」「导出诊断包」「问题反馈」三个入口。
+插件配置页提供「打开诊断目录」「导出诊断包」「问题反馈」三个入口：
 
-- 崩溃日志只保存在本机 `~/.spw-send/diagnostics/`，不会自动上传
-- 「导出诊断包」会把完整日志和运行状态打包成一个 zip
-- 「问题反馈」会在浏览器打开已预填模板的 GitHub Issue 页面，把诊断包拖入附件区即可
+- 崩溃日志只保存在本机 `~/.spw-send/diagnostics/`，不会自动上传。
+- 「导出诊断包」会把完整日志和运行状态打包成一个 zip。
+- 「问题反馈」会在浏览器打开已预填模板的 GitHub Issue 页面，把诊断包拖入附件区即可。
 
-## 技术栈
+## 技术栈与协议
 
-- **模组**：Kotlin / JVM、PF4J、SaltUI 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载
-- **Android 端**：MySend（Flutter）
-- **传输**：UDP 广播发现 + 局域网 HTTP，明文，仅建议在可信网络内使用
-
-## 协议
-
-完整契约见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，包含端口、握手、端点、续传规则与错误码。端口、请求头、字段与 MySend 安卓端保持一致。
+- **模组**：Kotlin / JVM、PF4J、SaltUI 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载。
+- **Android 端**：MySend（Flutter）。
+- **传输**：UDP 广播发现 + 局域网 HTTP，明文，仅建议在可信网络内使用。
+- 完整协议见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，端口、请求头、字段与 MySend 安卓端保持一致。
 
 ## 许可与致谢
 
