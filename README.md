@@ -12,7 +12,6 @@
   <a href="https://github.com/WinGua/SPW-Send/releases/latest"><img src="https://img.shields.io/github/v/release/WinGua/SPW-Send?label=release" alt="Release" /></a>
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0" />
   <img src="https://img.shields.io/badge/platform-Windows-0078D6" alt="Platform: Windows" />
-  <img src="https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black" alt="Platform: Linux" />
   <img src="https://img.shields.io/badge/host-Salt%20Player-4B8BF5" alt="Host: Salt Player" />
 </p>
 
@@ -23,7 +22,7 @@
 
 | 部分 | 位置 | 运行环境 |
 | --- | --- | --- |
-| Salt Player 模组（PC） | `plugin/` | 椒盐音乐 Windows / Linux 桌面版 |
+| Salt Player 模组（PC） | `plugin/` | 椒盐音乐 Windows 桌面版 |
 | Android 端 | [WinGua/MySend](https://github.com/WinGua/MySend/releases) | Android 7.0 及以上 |
 
 ## 当前状态
