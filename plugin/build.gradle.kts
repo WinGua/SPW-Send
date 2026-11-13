@@ -37,6 +37,7 @@ dependencies {
     compileOnly("org.jetbrains.compose.ui:ui:1.12.1")
     compileOnly("org.jetbrains.compose.animation:animation:1.12.1")
 
+    // SaltUI 上游见 docs/UPSTREAM.md（github.com/Moriafly/SaltUI），升级前对照基线。
     implementation("io.github.moriafly:salt-ui-desktop:3.0.0-beta02") {
         isTransitive = false
     }

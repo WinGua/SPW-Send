@@ -66,10 +66,11 @@ cd plugin && gradle plugin
 
 ## 技术栈与协议
 
-- **模组**：Kotlin / JVM、PF4J、SaltUI 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载。
+- **模组**：Kotlin / JVM、PF4J、[SaltUI](https://github.com/Moriafly/SaltUI) 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载。
 - **Android 端**：MySend（Flutter）。
 - **传输**：UDP 广播发现 + 局域网 HTTP，明文，仅建议在可信网络内使用。
 - 完整协议见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，端口、请求头、字段与 MySend 安卓端保持一致。
+- 上游依赖、版本基线与升级检查清单见 [docs/UPSTREAM.md](docs/UPSTREAM.md)。
 
 ## 许可与致谢
 
@@ -77,6 +78,7 @@ cd plugin && gradle plugin
 
 - 上游 / 安卓端：[WinGua/MySend](https://github.com/WinGua/MySend)
 - 插件运行时：[Moriafly/spw-workshop-api](https://github.com/Moriafly/spw-workshop-api)
+- 界面组件：[Moriafly/SaltUI](https://github.com/Moriafly/SaltUI)
 - 产品参考：[LocalSend](https://github.com/localsend/localsend)
 
 Built by Winter with DeepSeek.

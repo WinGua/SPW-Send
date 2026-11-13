@@ -1,3 +1,4 @@
+# 上游与升级基线见 docs/UPSTREAM.md，替换版本前先确认上游 Release。
 [versions]
 kotlin = "2.4.20"
 spw-workshop-api = "0.1.0-dev23"
