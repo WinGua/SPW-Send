@@ -1,8 +1,20 @@
-# SPW-Send
+<p align="center">
+  <img src="docs/images/workshop-thumbnail.png" width="430" alt="SPW-Send" />
+</p>
 
-椒盐音乐（Salt Player）配套的局域网音乐库同步模组。
+<h1 align="center">SPW-Send</h1>
 
-在电脑与 Android 手机 / 平板之间**双向同步新增文件**。电脑端以 Salt Player 创意工坊模组的形式运行，在播放器内完成双向对比、先发后收；手机端直接使用 [MySend](https://github.com/WinGua/MySend) 安卓版参与同一套同步流程。
+<p align="center">椒盐音乐（Salt Player）配套的局域网音乐库同步模组。</p>
+
+<p align="center">在电脑与 Android 手机 / 平板之间<strong>双向同步新增文件</strong>。电脑端以 Salt Player 创意工坊模组的形式运行，在播放器内完成双向对比、先发后收；手机端直接使用 <a href="https://github.com/WinGua/MySend">MySend</a> 安卓版参与同一套同步流程。</p>
+
+<p align="center">
+  <a href="https://github.com/WinGua/SPW-Send/releases/latest"><img src="https://img.shields.io/github/v/release/WinGua/SPW-Send?label=release" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0" />
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6" alt="Platform: Windows" />
+  <img src="https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black" alt="Platform: Linux" />
+  <img src="https://img.shields.io/badge/host-Salt%20Player-4B8BF5" alt="Host: Salt Player" />
+</p>
 
 > SPW-Send 是 [MySend](https://github.com/WinGua/MySend) 的定制分支，只提供电脑端模组。
 > 安卓端不再单独维护，统一使用 MySend 官方 APK；两端遵循同一套协议 v2。
