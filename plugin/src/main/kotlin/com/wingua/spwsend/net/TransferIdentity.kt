@@ -8,6 +8,9 @@ import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.PrivateKey
+import java.security.Signature
+import java.util.Base64
 import java.security.cert.X509Certificate
 import java.time.Instant
 import java.util.Date
@@ -19,7 +22,12 @@ import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 
 /** 每次安装独立的 RSA-2048 自签名身份，不修改宿主的全局 SSL/安全提供者。 */
-class TransferIdentity private constructor(val context: SSLContext, val fingerprint: String) {
+class TransferIdentity private constructor(val context: SSLContext, val fingerprint: String,
+    private val privateKey: PrivateKey, certificate: X509Certificate) {
+    val certificatePem = "-----BEGIN CERTIFICATE-----\n" + Base64.getMimeEncoder(64, byteArrayOf(10)).encodeToString(certificate.encoded) + "\n-----END CERTIFICATE-----\n"
+    fun sign(data: ByteArray): ByteArray = Signature.getInstance("SHA256withRSA").run {
+        initSign(privateKey); update(data); sign()
+    }
     companion object {
         fun hash(cert: X509Certificate): String =
             MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") {
@@ -81,6 +89,7 @@ class TransferIdentity private constructor(val context: SSLContext, val fingerpr
             return TransferIdentity(
                 SSLContext.getInstance("TLS").apply { init(km.keyManagers, null, null) },
                 hash(cert),
+                store.getKey("identity", password) as PrivateKey, cert,
             )
         }
     }

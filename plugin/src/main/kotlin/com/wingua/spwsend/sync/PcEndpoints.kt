@@ -12,6 +12,8 @@ import com.wingua.spwsend.core.longValue
 import com.wingua.spwsend.core.str
 import com.wingua.spwsend.net.HttpRequest
 import com.wingua.spwsend.net.HttpResponse
+import com.wingua.spwsend.net.PairRequest
+import com.wingua.spwsend.net.PairingProof
 import com.wingua.spwsend.net.TransferIdentity
 import java.io.File
 import java.io.FileOutputStream
@@ -37,10 +39,13 @@ class PcEndpoints(
     private val onRemoteLog: (String, Map<String, Any?>) -> Unit,
     private val onCancelInbound: (String) -> Unit = {},
     private val onCancelOutbound: (String, String) -> Boolean = { _, _ -> false },
+    private val onPairRequest: (PairRequest) -> Boolean = { false },
     private val onUploadStateChanged: (Boolean) -> Unit = {},
 ) {
 
     /** token -> 对端设备 id */
+    private val pairing = PairingProof(identityProvider, sessionProvider)
+    private val awaitingPair = java.util.concurrent.atomic.AtomicBoolean(false)
     private val tokens = ConcurrentHashMap<String, String>()
 
     /** 最多四个入站上传；同一目标文件只能有一个写入者。 */
@@ -56,6 +61,7 @@ class PcEndpoints(
     fun handle(req: HttpRequest): HttpResponse {
         return when (req.path) {
             "/v2/hello" -> hello(req)
+            "/v2/pair/challenge" -> pairChallenge(req)
             "/v2/pair" -> pair(req)
             "/v2/sync/acquire",
             "/v2/sync/renew",
@@ -95,6 +101,7 @@ class PcEndpoints(
     /** 服务下线时清空全部会话。 */
     fun clearTokens() {
         tokens.clear()
+        pairing.clear()
     }
 
     private fun hello(req: HttpRequest): HttpResponse {
@@ -106,7 +113,7 @@ class PcEndpoints(
             Json.obj(
                 "protocol" to "https",
                 "fingerprint" to identityProvider().fingerprint,
-                "capabilities" to listOf("sync-session", "sync-status"),
+                "capabilities" to listOf("sync-session", "sync-status", "pair-proof-v1"),
                 "proto" to Constants.PROTO,
                 "app" to Constants.APP_ID,
                 "version" to Constants.APP_VERSION,
@@ -122,10 +129,31 @@ class PcEndpoints(
         )
     }
 
+    private fun pairChallenge(req: HttpRequest): HttpResponse {
+        if (req.method != "POST") return error(405, "BAD_REQUEST", "需要 POST 请求")
+        if (busyProvider()) return error(409, "BUSY", "正在同步")
+        val data = parseBody(req, 16384) ?: return error(400, "BAD_REQUEST", "配对身份无效")
+        val id = data.str("id")
+        val fp = data.str("fingerprint")
+        if (
+            id.isEmpty() ||
+                id.length > 128 ||
+                id == configProvider().deviceId ||
+                data.str("role") != "android" ||
+                !Regex("[a-f0-9]{64}").matches(fp)
+        )
+            return error(400, "BAD_REQUEST", "配对身份无效")
+        val known = configProvider().trustedFingerprints[id]
+        if (known != null && known != fp) return error(403, "CERT_CHANGED", "对端证书身份已改变")
+        return json(200, pairing.issue(id, fp))
+    }
+
     private fun pair(req: HttpRequest): HttpResponse {
         if (req.method != "POST") return error(405, "BAD_REQUEST", "方法不允许")
-        protoMismatch(req)?.let { return it }
-        val data = parseBody(req) ?: return error(400, "BAD_REQUEST", "请求体非法")
+        protoMismatch(req)?.let {
+            return it
+        }
+        val data = parseBody(req, 32768) ?: return error(400, "BAD_REQUEST", "请求体非法")
         if (data.intValue("proto") != Constants.PROTO) {
             return error(426, "PROTO_MISMATCH", "协议版本不一致")
         }
@@ -144,6 +172,22 @@ class PcEndpoints(
         ) {
             return error(403, "CERT_CHANGED", "对端证书身份缺失或已改变")
         }
+        if (!pairing.verify(data)) return error(401, "PAIR_PROOF_REQUIRED", "配对需要有效的私钥持有证明")
+        if (known == null) {
+            if (!awaitingPair.compareAndSet(false, true)) return error(409, "BUSY", "正在确认另一台设备")
+            val accepted =
+                try {
+                    onPairRequest(
+                        PairRequest(peerId, data.str("name"), req.remoteAddress, fingerprint)
+                    )
+                } finally {
+                    awaitingPair.set(false)
+                }
+            if (!accepted) return error(403, "PAIR_REJECTED", "配对未获确认")
+        }
+        val currentTrust = configProvider().trustedFingerprints[peerId]
+        if (busyProvider() || (currentTrust != null && currentTrust != fingerprint))
+            return error(409, "BUSY", "配对状态已变化")
         trustIdentity(peerId, fingerprint)
         // 同一设备重新配对时，旧 token 立即失效。
         forget(peerId)

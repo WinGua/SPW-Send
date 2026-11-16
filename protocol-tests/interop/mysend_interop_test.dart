@@ -48,7 +48,7 @@ void main() {
       config.config.mappings.add(mapping);
       var reverseToken = '';
       server = LocalTransferServer(identity: identity, preferredPort: 0, config: config,
-        isSender: false, session: 'dart', onPeerPaired: (_, token) { reverseToken = token; }, onSyncLog: (_) async {}, onDisconnect: (_) {});
+        isSender: false, session: 'dart', onPairRequest: (_) async => true, onPeerPaired: (_, token) { reverseToken = token; }, onSyncLog: (_) async {}, onDisconnect: (_) {});
       await server.start();
       final peer = PeerDevice(id: hello['id'] as String, name: 'SPW test', form: 'desktop', session: 'plugin',
         address: '127.0.0.1', port: hello['port'] as int, fingerprint: hello['fingerprint'] as String, lastSeen: DateTime.now());
@@ -161,7 +161,30 @@ void main() {
         expect(server.sessions.busy, isFalse);
       } finally { server.remoteSync.removeListener(cancelIncoming); }
       // ignore: avoid_print
-      print('INTEROP PASSED: Dart initiates; Kotlin initiates; resume; 4-file concurrency; session race; mirrored progress; phone cancellation; SHA-256');
+      await seed('${pc.path}/00-io-fail.bin', 128000, 1);
+      for (var i=0; i<12; i++) { await seed('${pc.path}/healthy-$i.bin', 128003+i, i+1); }
+      final localError = await command('syncLocalFailure');
+      expect(localError['ok'], isTrue, reason: '$localError');
+      expect(localError['cancelled'], isFalse);
+      expect(localError['failed'], 1);
+      for (var i=0; i<12; i++) { await equal('healthy-$i.bin'); }
+
+      await seed('${pc.path}/plugin-cancel.bin', 16*1024*1024, 13);
+      final ended = Completer<void>();
+      void onPluginCancel() {
+        final state=server!.remoteSync.value;
+        if (state?.finished == true && state?.error == '同步已取消' && !ended.isCompleted) ended.complete();
+      }
+      server.remoteSync.addListener(onPluginCancel);
+      try {
+        final pluginCancel = await command('syncCancel');
+        expect(pluginCancel['cancelled'] == true || '${pluginCancel['error']}'.contains('已取消'), isTrue, reason: '$pluginCancel');
+        onPluginCancel();
+        await ended.future.timeout(const Duration(seconds: 3));
+        expect(server.remoteSync.value!.error, '同步已取消');
+      } finally { server.remoteSync.removeListener(onPluginCancel); }
+
+      print('INTEROP PASSED: Dart initiates; Kotlin initiates; resume; 4-file concurrency; session race; mirrored progress; phone cancellation; plugin cancellation; local I/O continues; SHA-256');
     } finally {
       client?.close(); await server?.stop();
       process.stdin.writeln('{"op":"stop"}'); await process.stdin.close();

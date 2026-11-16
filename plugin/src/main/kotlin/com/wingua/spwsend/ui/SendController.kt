@@ -28,7 +28,8 @@ data class PeerUi(
     val name: String,
     val connected: Boolean,
     val appVersion: String,
-    val identityKnown: Boolean = false
+    val identityKnown: Boolean = false,
+    val canVerify: Boolean = false,
 )
 
 /** 页面内弹窗。 */
@@ -39,7 +40,9 @@ data class PanelDialog(
     val confirmText: String = "关闭",
     val showCancel: Boolean = false,
     val onConfirm: (() -> Unit)? = null,
-    val running: Boolean = false
+    val running: Boolean = false,
+    val onCancel: (() -> Unit)? = null,
+    val verification: com.wingua.spwsend.net.PairingVerification? = null,
 )
 
 /** 名称输入的用途。 */
@@ -52,7 +55,7 @@ data class NameInput(
     val path: String,
     val value: String,
     val mode: NameInputMode = NameInputMode.Mapping,
-    val error: String? = null
+    val error: String? = null,
 )
 
 /**
@@ -76,6 +79,12 @@ object SendController {
     private var cancelRequested = false
 
     private var listenerAttached = false
+    private val pairDecision =
+        java.util.concurrent.atomic.AtomicReference<
+            java.util.concurrent.CompletableFuture<Boolean>?
+        >(
+            null
+        )
     private var remoteTask: String? = null
     private var remoteFinished = false
 
@@ -156,6 +165,7 @@ object SendController {
             listenerAttached = true
             core.onChanged = { post { refreshFromCore() } }
         }
+        core.onPairRequest = ::confirmPair
         runCatching { core.start() }
             .onFailure { Diagnostics.record("service", "启动异常: ${it.message}") }
         refreshFromCore()
@@ -164,7 +174,7 @@ object SendController {
         status = core.startupError ?: if (core.isRunning) "服务已就绪" else "服务未启动"
         Diagnostics.record(
             "service",
-            "启动 运行=${core.isRunning} 端口=${core.actualPort} 错误=${core.startupError ?: "无"}"
+            "启动 运行=${core.isRunning} 端口=${core.actualPort} 错误=${core.startupError ?: "无"}",
         )
     }
 
@@ -173,6 +183,8 @@ object SendController {
         Diagnostics.record("service", "关闭")
         listenerAttached = false
         cancelRequested = true
+        pairDecision.getAndSet(null)?.complete(false)
+        core.onPairRequest = null
         core.onChanged = null
         runCatching { core.stop() }
             .onFailure { Diagnostics.record("service", "关闭异常: ${it.message}") }
@@ -214,12 +226,13 @@ object SendController {
         if (dialog?.running == true) return
         when {
             nameInput != null -> nameInput = null
-            dialog != null -> dialog = null
+            dialog != null -> cancelDialog()
             else -> requestClose()
         }
     }
 
     private fun stopCore() {
+        pairDecision.getAndSet(null)?.complete(false)
         runCatching { core.stop() }
         serviceRunning = false
         port = 0
@@ -325,7 +338,7 @@ object SendController {
                     progress = if (result.isEmpty) 1f else 0f
                     Diagnostics.record(
                         "compare",
-                        "完成 映射=${result.mapping.name} 发送=${result.toSend.size} 接收=${result.toReceive.size}"
+                        "完成 映射=${result.mapping.name} 发送=${result.toSend.size} 接收=${result.toReceive.size}",
                     )
                     status = when {
                         result.isEmpty -> "两端文件一致"
@@ -382,7 +395,7 @@ object SendController {
         status = "正在同步 0/$total"
         Diagnostics.record(
             "sync",
-            "开始 映射=${current.mapping.name} 发送=${current.toSend.size} 接收=${current.toReceive.size}"
+            "开始 映射=${current.mapping.name} 发送=${current.toSend.size} 接收=${current.toReceive.size}",
         )
         executor.execute {
             var outcome: SyncOutcome? = null
@@ -420,7 +433,7 @@ object SendController {
                     Diagnostics.record(
                         "sync",
                         "结束 发送=${result.log.sentCount} 接收=${result.log.receivedCount} " +
-                            "失败=${result.log.failed} 取消=${result.cancelled}"
+                            "失败=${result.log.failed} 取消=${result.cancelled}",
                     )
                 } else if (error != null) {
                     Diagnostics.record("sync", "失败: ${error.message}")
@@ -642,24 +655,76 @@ object SendController {
 
     fun clearLogs() {
         if (logs.isEmpty()) return
-        dialog = PanelDialog(
-            title = "清除同步日志",
-            message = "确定清除本机全部同步日志吗？已同步的文件不会受影响。",
-            success = false,
-            confirmText = "清除",
-            showCancel = true,
-            onConfirm = {
-                logStore.clear()
-                Diagnostics.record("log", "清除同步日志")
-                refreshLogs()
-                status = "已清除同步日志"
+        dialog =
+            PanelDialog(
+                title = "清除同步日志",
+                message = "确定清除本机全部同步日志吗？已同步的文件不会受影响。",
+                success = false,
+                confirmText = "清除",
+                showCancel = true,
+                onConfirm = {
+                    logStore.clear()
+                    Diagnostics.record("log", "清除同步日志")
+                    refreshLogs()
+                    status = "已清除同步日志"
+                },
+            )
+    }
+
+    fun verifyPeer(id: String) {
+        if (dialog != null) return
+        val peer = core.peers().firstOrNull { it.id == id } ?: return
+        val verification =
+            runCatching {
+                com.wingua.spwsend.net.PairingVerification.of(
+                    core.identity.fingerprint,
+                    peer.fingerprint,
+                )
             }
-        )
+                .getOrNull() ?: return
+        dialog = PanelDialog("核对图标", "与「${peer.name}」核对设备身份。", true, verification = verification)
+    }
+
+    private fun confirmPair(request: com.wingua.spwsend.net.PairRequest): Boolean {
+        val decision = java.util.concurrent.CompletableFuture<Boolean>()
+        if (!pairDecision.compareAndSet(null, decision)) return false
+        val prompt =
+            PanelDialog(
+                "允许设备配对",
+                "设备「${request.name}」请求访问同步目录。\n地址：${request.address}\n证书指纹：${request.fingerprint}",
+                false,
+                confirmText = "图标一致，允许配对",
+                showCancel = true,
+                verification =
+                    com.wingua.spwsend.net.PairingVerification.of(
+                        core.identity.fingerprint,
+                        request.fingerprint,
+                    ),
+                onConfirm = { decision.complete(true) },
+                onCancel = { decision.complete(false) },
+            )
+        post {
+            if (dialog != null || syncActive || compareActive) decision.complete(false)
+            else {
+                SendPanelState.open()
+                dialog = prompt
+            }
+        }
+        return try {
+            decision.get(110, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            false
+        } finally {
+            pairDecision.compareAndSet(decision, null)
+            post { if (dialog === prompt) dialog = null }
+        }
     }
 
     fun cancelDialog() {
         if (dialog?.running == true) return
+        val previous = dialog
         dialog = null
+        previous?.onCancel?.invoke()
     }
 
     fun confirmDialog() {
@@ -679,15 +744,17 @@ object SendController {
             selectedMappingId = config.mappings.firstOrNull()?.id
         }
 
-        val snapshot = core.peers().map { peer ->
-            PeerUi(
-                id = peer.id,
-                name = peer.name,
-                connected = core.isConnected(peer.id),
-                appVersion = peer.appVersion,
-                identityKnown = core.hasTrustedIdentity(peer.id)
-            )
-        }
+        val snapshot =
+            core.peers().map { peer ->
+                PeerUi(
+                    id = peer.id,
+                    name = peer.name,
+                    connected = core.isConnected(peer.id),
+                    appVersion = peer.appVersion,
+                    identityKnown = core.hasTrustedIdentity(peer.id),
+                    canVerify = Regex("[a-f0-9]{64}").matches(peer.fingerprint),
+                )
+            }
         peers = snapshot
         serviceRunning = core.isRunning
         port = core.actualPort

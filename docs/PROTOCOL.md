@@ -458,3 +458,12 @@ v1.1 插件和旧 MySend 的明文传输不再兼容。两端都应更新到支�
 ### 取消同步
 
 `POST /v2/sync/cancel?task=<task>` 使用已配对 token 和空请求体。任务由该对端发起时，服务端将租约标记取消并关闭对应的活动文件连接；任务由本机发起时，只接受当前配对对端与任务 ID 同时匹配的取消。未知或其他设备的任务返回 409。活动文件 I/O 退出前不会开放同步槽位。
+
+
+### 配对身份校验
+
+配对前 POST `/v2/pair/challenge` 提交设备 `id`、`role` 和 `fingerprint`，返回一次性 `challengeId`、`challenge`、服务端 `session` 与 `fingerprint`。挑战有效期 30 秒，每个服务最多保留 128 个，验证时立即消费。
+
+POST `/v2/pair` 除设备描述与反向 token 外，还需提交 PEM `certificate`、`challengeId` 和 Base64 `proof`。证书 SHA-256 必须匹配设备指纹，签名使用持久身份私钥的 RSA PKCS#1 v1.5 / SHA-256。签名数据为 UTF-8 `MySend-Pair-v1\n`，之后依次编码服务端指纹、服务端 session、challengeId、challenge，以及请求中的 `id,fingerprint,role,form,name,port,session,token`；每项采用 ASCII 字节长度、冒号、UTF-8 内容。缺失 port 为 0，其他缺失项为空字符串。
+
+签发 token 前验证证明；未知身份还需接收端人工确认。图标核对沿用 LocalSend：两端 SHA-256 指纹转大写、排序拼接后再取 SHA-256 的前 128 位，以固定的 260 图标字典转为 16 位编码，按四行四列显示。图标与文字模式用于首次配对时人工核对，两端均支持；图标核对不能替代私钥证明。双方需配套升级。

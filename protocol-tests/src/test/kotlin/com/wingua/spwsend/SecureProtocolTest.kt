@@ -13,6 +13,27 @@ class SecureProtocolTest {
     private fun temp() = Files.createTempDirectory("spw-protocol-test").toFile()
 
     @Test
+    fun `public discovery fields cannot impersonate an already trusted identity`() {
+        val root = temp()
+        try {
+            val identity = TransferIdentity.loadOrCreate(File(root, "server.p12"))
+            val victim = TransferIdentity.loadOrCreate(File(root, "victim.p12"))
+            val config = com.wingua.spwsend.core.Config("pc", "pc", 0, emptyList(), mapOf("victim" to victim.fingerprint))
+            val endpoints = PcEndpoints(
+                identityProvider = { identity }, sessions = SyncLease(), progress = RemoteProgress {},
+                trustIdentity = { _, _ -> }, sessionProvider = { "server" }, configProvider = { config },
+                busyProvider = { false }, onPeerDisconnected = {}, onPeerPaired = { _, _, _ -> }, onRemoteLog = { _, _ -> },
+            )
+            val bytes = com.wingua.spwsend.core.Json.stringify(mapOf(
+                "id" to "victim", "name" to "forged", "role" to "android", "proto" to 2,
+                "fingerprint" to victim.fingerprint,
+            )).toByteArray()
+            val request = HttpRequest("POST", "/v2/pair", emptyMap(), emptyMap(), bytes.inputStream(), bytes.size.toLong())
+            assertEquals(401, endpoints.handle(request).status, "Public fingerprints must not grant a fresh token")
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
     fun `cancel verifies owner and preserves lease until active requests exit`() {
         val lease = SyncLease()
         assertTrue(lease.acquire("phone", "task"))

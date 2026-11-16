@@ -13,7 +13,29 @@ import java.net.URLEncoder
 import javax.net.ssl.HttpsURLConnection
 
 /** 严格固定证书指纹的 HTTPS 客户端；完整消费响应后复用连接。 */
+class TransportIOException(cause: IOException) : IOException(cause.message, cause)
+
 object HttpClientLite {
+    private inline fun <T> network(action: () -> T): T =
+        try {
+            action()
+        } catch (e: TransportIOException) {
+            throw e
+        } catch (e: IOException) {
+            throw TransportIOException(e)
+        }
+
+    private class NetworkOutput(private val output: OutputStream) : OutputStream() {
+        override fun write(value: Int) = network { output.write(value) }
+
+        override fun write(bytes: ByteArray, offset: Int, length: Int) = network {
+            output.write(bytes, offset, length)
+        }
+
+        override fun flush() = network { output.flush() }
+
+        override fun close() = network { output.close() }
+    }
 
     private val active =
         java.util.concurrent.ConcurrentHashMap<String, MutableSet<HttpURLConnection>>()
@@ -176,7 +198,7 @@ object HttpClientLite {
             }
             for ((k, v) in headers) conn.setRequestProperty(k, v)
 
-            val status = conn.responseCode
+            val status = network { conn.responseCode }
             val responseHeaders = LinkedHashMap<String, String>()
             for ((key, values) in conn.headerFields) {
                 if (key == null) continue
@@ -196,13 +218,13 @@ object HttpClientLite {
             target.parentFile?.mkdirs()
             val appendFile = append && status == 206
             var received = 0L
-            val input = conn.inputStream
+            val input = network { conn.inputStream }
             try {
                 FileOutputStream(target, appendFile).use { out ->
                     val buffer = ByteArray(512 * 1024)
                     while (true) {
                         checkCancelled()
-                        val read = input.read(buffer)
+                        val read = network { input.read(buffer) }
                         if (read <= 0) break
                         out.write(buffer, 0, read)
                         received += read
@@ -266,32 +288,33 @@ object HttpClientLite {
                 conn.setFixedLengthStreamingMode(streamLength)
                 var writeError: IOException? = null
                 try {
-                    conn.outputStream.use { out ->
+                    NetworkOutput(network { conn.outputStream }).use { out ->
                         writer(out)
                         out.flush()
                     }
                 } catch (e: IOException) {
+                    if (e !is TransportIOException) throw e
                     writeError = e
                 }
                 val status =
                     try {
-                        conn.responseCode
+                        network { conn.responseCode }
                     } catch (e: IOException) {
                         throw writeError ?: e
                     }
-                return readResult(conn, status).also { reusable = true }
+                return network { readResult(conn, status) }.also { reusable = true }
             }
 
             if (body != null) {
                 conn.doOutput = true
                 conn.setFixedLengthStreamingMode(body.size)
-                conn.outputStream.use { it.write(body) }
+                network { conn.outputStream.use { it.write(body) } }
             } else if (method != "GET") {
                 conn.doOutput = true
                 conn.setFixedLengthStreamingMode(0L)
             }
 
-            return readResult(conn, conn.responseCode).also { reusable = true }
+            return network { readResult(conn, conn.responseCode) }.also { reusable = true }
         } finally {
             unregister(task, conn)
             if (!reusable) conn.disconnect()

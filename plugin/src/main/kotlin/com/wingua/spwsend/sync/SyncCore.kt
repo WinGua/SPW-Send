@@ -87,6 +87,7 @@ class SyncCore(
     val identity by lazy {
         TransferIdentity.loadOrCreate(File(configStore.directory, "identity.p12"))
     }
+    @Volatile var onPairRequest: ((com.wingua.spwsend.net.PairRequest) -> Boolean)? = null
     val remoteProgress = RemoteProgress { notifyChanged() }
     val outboundProgress = RemoteProgress { notifyChanged() }
     val sessions = SyncLease(onEnded = remoteProgress::interrupt)
@@ -136,6 +137,7 @@ class SyncCore(
     private val endpoints =
         PcEndpoints(
             identityProvider = { identity },
+            onPairRequest = { request -> onPairRequest?.invoke(request) ?: false },
             sessions = sessions,
             progress = remoteProgress,
             trustIdentity = ::trustPeer,
@@ -337,21 +339,48 @@ class SyncCore(
         }
         // 主动配对时附带本机签发的 token，让 MySend 安卓端配对后可直接反向调用本机。
         val ownToken = endpoints.issueTokenFor(peer.id)
+        val description =
+            Json.obj(
+                "fingerprint" to identity.fingerprint,
+                "protocol" to "https",
+                "id" to config.deviceId,
+                "name" to config.deviceName,
+                "role" to "pc",
+                "form" to "desktop",
+                "app" to Constants.APP_ID,
+                "appVersion" to Constants.APP_VERSION,
+                "proto" to Constants.PROTO,
+                "port" to actualPort,
+                "session" to session,
+                "token" to ownToken,
+            )
+        val challenge =
+            HttpClientLite.post(
+                    host = peer.address,
+                    fingerprint = fingerprint(peer),
+                    port = peer.port,
+                    path = "/v2/pair/challenge",
+                    body =
+                        Json.stringify(
+                                mapOf(
+                                    "id" to config.deviceId,
+                                    "fingerprint" to identity.fingerprint,
+                                    "role" to "pc",
+                                )
+                            )
+                            .toByteArray(),
+                )
+                .also {
+                    check(it.status == 200) { "对端需要支持私钥配对证明" }
+                }
+                .json()
         val body =
             Json.stringify(
-                    Json.obj(
-                        "fingerprint" to identity.fingerprint,
-                        "protocol" to "https",
-                        "id" to config.deviceId,
-                        "name" to config.deviceName,
-                        "role" to "pc",
-                        "form" to "desktop",
-                        "app" to Constants.APP_ID,
-                        "appVersion" to Constants.APP_VERSION,
-                        "proto" to Constants.PROTO,
-                        "port" to actualPort,
-                        "session" to session,
-                        "token" to ownToken,
+                    com.wingua.spwsend.net.PairingProof.sign(
+                        description,
+                        challenge,
+                        identity,
+                        fingerprint(peer),
                     )
                 )
                 .toByteArray(Charsets.UTF_8)
@@ -367,7 +396,7 @@ class SyncCore(
                         "Content-Type" to "application/json; charset=utf-8",
                     ),
                 body = body,
-                readTimeoutMs = Constants.CONTROL_TIMEOUT_MS,
+                readTimeoutMs = 120_000,
             )
         if (result.status != 200) return false
         val token = result.json().str("token")
@@ -625,10 +654,11 @@ class SyncCore(
                 } catch (_: CancelledException) {
                     stopped.set(true)
                 } catch (e: Exception) {
-                    if (checkStop() || e is java.io.IOException) {
+                    if (checkStop()) {
                         stopped.set(true)
                         HttpClientLite.cancelTask(task)
-                    } else failures.add(SyncFailure(file.relativePath, reasonOf(e), "send"))
+                    } else if (e is com.wingua.spwsend.net.TransportIOException) throw e
+                    else failures.add(SyncFailure(file.relativePath, reasonOf(e), "send"))
                 }
                 report(file.relativePath, SyncDirection.Send)
             }
@@ -643,10 +673,11 @@ class SyncCore(
                     } catch (_: CancelledException) {
                         stopped.set(true)
                     } catch (e: Exception) {
-                        if (checkStop() || e is java.io.IOException) {
+                        if (checkStop()) {
                             stopped.set(true)
                             HttpClientLite.cancelTask(task)
-                        } else failures.add(SyncFailure(file.relativePath, reasonOf(e), "recv"))
+                        } else if (e is com.wingua.spwsend.net.TransportIOException) throw e
+                        else failures.add(SyncFailure(file.relativePath, reasonOf(e), "recv"))
                     }
                     report(file.relativePath, SyncDirection.Receive)
                 }
@@ -725,7 +756,19 @@ class SyncCore(
             if (remoteAttempted) {
                 if (stopped.get() || cancelled()) {
                     Thread(
-                            { runCatching { control(peer, token, "release", task) } },
+                            {
+                                // Notify cancellation before releasing the lease; otherwise the
+                                // receiver can only infer an abnormal session loss.
+                                runCatching { control(peer, token, "cancel", task) }
+                                runCatching {
+                                    status(
+                                        peer,
+                                        token,
+                                        Json.obj("phase" to "end", "error" to "同步已取消"),
+                                    )
+                                }
+                                runCatching { control(peer, token, "release", task) }
+                            },
                             "spw-send-release",
                         )
                         .apply {

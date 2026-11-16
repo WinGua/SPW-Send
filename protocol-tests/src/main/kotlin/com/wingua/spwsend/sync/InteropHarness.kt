@@ -19,7 +19,7 @@ fun main(args: Array<String>) {
                 mappings = listOf(Mapping("music", "music", source.path)),
             )
     store.save(cfg)
-    val core = SyncCore(store, LogStore(File(root, "logs")))
+    val core = SyncCore(store, LogStore(File(root, "logs"))).apply { onPairRequest = { true } }
     try {
         core.config.port = 0
         core.start()
@@ -57,7 +57,9 @@ fun main(args: Array<String>) {
                             )
                         )
                     }
-                    "sync" -> {
+                    "sync",
+                    "syncCancel",
+                    "syncLocalFailure" -> {
                         val peer =
                             Peer(
                                 input.str("id"),
@@ -71,7 +73,31 @@ fun main(args: Array<String>) {
                             )
                         check(core.connect(peer)) { "pair failed" }
                         val pending = core.compare(peer, cfg.mappings.single())
-                        val result = core.sync(peer, pending, { _, _, _, _ -> }, { false })
+                        val operation = input.str("op")
+                        val cancel = java.util.concurrent.atomic.AtomicBoolean(false)
+                        core.onChanged = {
+                            val state = core.outboundProgress.snapshot
+                            if (
+                                operation == "syncCancel" &&
+                                    state != null &&
+                                    !state.finished &&
+                                    state.bytes > 0 &&
+                                    cancel.compareAndSet(false, true)
+                            )
+                                core.cancelTransfers()
+                            if (
+                                operation == "syncLocalFailure" &&
+                                    state?.current == "00-io-fail.bin" &&
+                                    state.sending
+                            )
+                                File(source, "00-io-fail.bin").delete()
+                        }
+                        val result =
+                            try {
+                                core.sync(peer, pending, { _, _, _, _ -> }, { cancel.get() })
+                            } finally {
+                                core.onChanged = null
+                            }
                         println(
                             Json.stringify(
                                 Json.obj(
