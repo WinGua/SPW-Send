@@ -11,6 +11,7 @@ sourceSets {
 }
 dependencies {
     implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
+    implementation("net.java.dev.jna:jna:5.18.1")
     testImplementation(kotlin("test-junit"))
 }
 tasks.test {

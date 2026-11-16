@@ -1044,13 +1044,12 @@ class SyncCore(
                 )
                 downloadPart(peer, token, mapping, remote, 0L, part, cancelled)
             }
-        } else if (!part.isFile) {
+        } else if (remote.size == 0L) {
             // 空文件不会触发下载，需显式创建 0 字节分片以便后续原子改名。
-            part.parentFile?.mkdirs()
-            part.writeBytes(ByteArray(0))
+            PartStore.openPart(root, relativePath, false).use { }
         }
 
-        val received = part.length()
+        val received = PartStore.partLength(root, relativePath)
         if (received > remote.size) {
             PartStore.discard(root, relativePath)
             throw RemoteException("INCOMPLETE", "数据超出预期大小，已重置分片")
@@ -1059,13 +1058,12 @@ class SyncCore(
             throw RemoteException("INCOMPLETE", "拉取数据不完整，已保留分片")
         }
 
-        dst.parentFile?.mkdirs()
+        if (remote.mtimeMs > 0) runCatching { PartStore.setModified(root, relativePath, remote.mtimeMs) }
         if (!PartStore.promote(part, dst)) {
             // 竞争期间目标被其他任务写入：不覆盖，丢弃分片。
             PartStore.discard(root, relativePath)
             return
         }
-        if (remote.mtimeMs > 0) runCatching { dst.setLastModified(remote.mtimeMs) }
         PartStore.discard(root, relativePath)
     }
 
@@ -1096,6 +1094,7 @@ class SyncCore(
                 rangeStart = start,
                 readTimeoutMs = fileTimeoutMs(remote.size),
                 target = part,
+                openTarget = { append -> PartStore.openPart(File(mapping.sourcePath), remote.relativePath, append) },
                 append = start > 0,
                 checkCancelled = { if (cancelled()) throw CancelledException() },
                 onBytes = { outboundProgress.bytes(task, it, remote.relativePath) },

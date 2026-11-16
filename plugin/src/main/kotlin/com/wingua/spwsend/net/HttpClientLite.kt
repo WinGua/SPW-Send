@@ -169,6 +169,7 @@ object HttpClientLite {
         append: Boolean,
         checkCancelled: () -> Unit,
         onBytes: (Int) -> Unit = {},
+        openTarget: ((Boolean) -> OutputStream)? = null,
     ): DownloadResult {
         val url = buildUrl(host, fingerprint, port, path, query)
         val conn = url.openConnection(Proxy.NO_PROXY) as HttpsURLConnection
@@ -215,12 +216,12 @@ object HttpClientLite {
                 return DownloadResult(status, error, 0L, responseHeaders)
             }
 
-            target.parentFile?.mkdirs()
+            if (openTarget == null) target.parentFile?.mkdirs()
             val appendFile = append && status == 206
             var received = 0L
             val input = network { conn.inputStream }
             try {
-                FileOutputStream(target, appendFile).use { out ->
+                (openTarget?.invoke(appendFile) ?: FileOutputStream(target, appendFile)).use { out ->
                     val buffer = ByteArray(512 * 1024)
                     while (true) {
                         checkCancelled()
@@ -235,7 +236,7 @@ object HttpClientLite {
             } finally {
                 runCatching { input.close() }
             }
-            val total = if (appendFile) target.length() else received
+            val total = if (appendFile && openTarget == null) target.length() else if (appendFile) rangeStart + received else received
             reusable = true
             return DownloadResult(status, ByteArray(0), total, responseHeaders)
         } finally {

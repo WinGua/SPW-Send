@@ -27,6 +27,7 @@ kotlin {
 
 dependencies {
     implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
+    implementation("net.java.dev.jna:jna:5.18.1")
     compileOnly(kotlin("stdlib"))
     compileOnly(libs.spw.workshop.api)
     kapt(libs.spw.workshop.api)

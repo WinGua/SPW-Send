@@ -1,0 +1,4 @@
+JNA 5.18.1 (system file handles and atomic no-replace operations)
+Source: https://github.com/java-native-access/jna/tree/5.18.1
+License: Apache-2.0 (selected from the upstream dual license).
+Original licenses and notices are included in lib/jna-5.18.1.jar.

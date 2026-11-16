@@ -6,10 +6,6 @@ import com.wingua.spwsend.core.asMap
 import com.wingua.spwsend.core.longValue
 import com.wingua.spwsend.core.str
 import java.io.File
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.FileSystemException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -17,96 +13,133 @@ import java.util.Locale
 data class PartMeta(
     val path: String,
     val size: Long,
-    val mtime: Long
+    val mtime: Long,
 )
 
 /**
  * `.mysend-part` 分片管理。
  *
- * 分片路径：`<映射根>/.mysend-part/<sha256(相对路径)>.part`
- * 元数据：同目录 `<sha256(相对路径)>.meta`
+ * 分片路径：`<映射根>/.mysend-part/<sha256(相对路径)>.part` 元数据：同目录 `<sha256(相对路径)>.meta`
  *
- * 分片只在「偏移 + 最终字节数」都校验通过后才原子改名到目标路径，
- * 因此中断不会留下半截正式文件。
+ * 分片只在「偏移 + 最终字节数」都校验通过后才原子改名到目标路径， 因此中断不会留下半截正式文件。
  */
 object PartStore {
+    fun keyFor(relativePath: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(relativePath.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
 
-    fun keyFor(relativePath: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val bytes = digest.digest(relativePath.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") {
-            String.format(Locale.ROOT, "%02x", it.toInt() and 0xff)
+    private fun relative(path: String, extension: String) =
+        "${Constants.PART_DIR}/${keyFor(path)}.$extension"
+
+    fun partFile(root: File, relativePath: String) = File(root, relative(relativePath, "part"))
+
+    fun metaFile(root: File, relativePath: String) = File(root, relative(relativePath, "meta"))
+
+    private fun <T> withFile(
+        root: File,
+        path: String,
+        create: Boolean = false,
+        action: (BoundDirectory, String) -> T,
+    ): T =
+        FileScope(root).use { scope ->
+            val (dir, name) = scope.parent(path, create)
+            action(dir, name)
+        }
+
+    fun readMeta(root: File, relativePath: String): PartMeta? = runCatching {
+        withFile(root, relative(relativePath, "meta")) { dir, name ->
+            val entry = dir.stat(name) ?: return@withFile null
+            if (!entry.regular || entry.size > 65536) throw java.io.IOException("分片元数据无效")
+            val raw = dir.read(name).use { it.readNBytes(65537) }
+            if (raw.size > 65536) throw java.io.IOException("分片元数据过大")
+            val map = Json.parse(String(raw, Charsets.UTF_8)).asMap()
+            PartMeta(map.str("p"), map.longValue("size"), map.longValue("mtime"))
         }
     }
-
-    fun partFile(root: File, relativePath: String): File =
-        File(File(root, Constants.PART_DIR), keyFor(relativePath) + ".part")
-
-    fun metaFile(root: File, relativePath: String): File =
-        File(File(root, Constants.PART_DIR), keyFor(relativePath) + ".meta")
-
-    fun readMeta(root: File, relativePath: String): PartMeta? {
-        val file = metaFile(root, relativePath)
-        if (!file.isFile) return null
-        return runCatching {
-            val map = Json.parse(file.readText(Charsets.UTF_8)).asMap()
-            PartMeta(
-                path = map.str("p"),
-                size = map.longValue("size"),
-                mtime = map.longValue("mtime")
-            )
-        }.getOrNull()
-    }
+        .getOrNull()
 
     @Synchronized
     fun writeMeta(root: File, relativePath: String, meta: PartMeta) {
-        val file = metaFile(root, relativePath)
-        file.parentFile?.mkdirs()
-        file.writeText(
-            Json.stringify(
-                Json.obj(
-                    "p" to meta.path,
-                    "size" to meta.size,
-                    "mtime" to meta.mtime
-                )
-            ),
-            Charsets.UTF_8
-        )
+        val bytes =
+            Json.stringify(Json.obj("p" to meta.path, "size" to meta.size, "mtime" to meta.mtime))
+                .toByteArray(Charsets.UTF_8)
+        withFile(root, relative(relativePath, "meta"), true) { dir, name ->
+            dir.write(name, false).use { it.write(bytes) }
+        }
     }
+
+    /** Hold the directory authority until the payload stream is closed. */
+    fun openPart(root: File, relativePath: String, append: Boolean): java.io.OutputStream {
+        val scope = FileScope(root)
+        try {
+            val (dir, name) = scope.parent(relative(relativePath, "part"), true)
+            val output = dir.write(name, append)
+            return object : java.io.OutputStream() {
+                private var closed = false
+
+                override fun write(value: Int) = output.write(value)
+
+                override fun write(bytes: ByteArray, off: Int, len: Int) =
+                    output.write(bytes, off, len)
+
+                override fun flush() = output.flush()
+
+                override fun close() {
+                    if (!closed) {
+                        closed = true
+                        try {
+                            output.close()
+                        } finally {
+                            scope.close()
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            scope.close()
+            throw e
+        }
+    }
+
+    fun partLength(root: File, relativePath: String): Long =
+        try {
+            withFile(root, relative(relativePath, "part")) { dir, name ->
+                val entry = dir.stat(name) ?: return@withFile 0L
+                if (!entry.regular) throw java.io.IOException("分片路径不是普通文件")
+                entry.size
+            }
+        } catch (_: java.nio.file.NoSuchFileException) {
+            0L
+        }
+
+    fun setModified(root: File, relativePath: String, millis: Long) =
+        withFile(root, relative(relativePath, "part")) { dir, name -> dir.modified(name, millis) }
 
     @Synchronized
     fun discard(root: File, relativePath: String) {
-        runCatching { partFile(root, relativePath).delete() }
-        runCatching { metaFile(root, relativePath).delete() }
+        for (extension in listOf("part", "meta")) try {
+            withFile(root, relative(relativePath, extension)) { dir, name -> dir.delete(name) }
+        } catch (_: java.nio.file.NoSuchFileException) {}
         removeEmptyDirectory(root)
     }
 
     private fun removeEmptyDirectory(root: File) {
-        val dir = File(root, Constants.PART_DIR)
-        if (Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            dir.delete() // 非递归；目录非空时由操作系统拒绝删除。
-        }
+        // Best-effort removal; active files or directory handles keep the cache in place.
+        runCatching { withFile(root, Constants.PART_DIR) { dir, name -> dir.delete(name, true) } }
     }
 
-    /**
-     * 返回可续传的字节偏移。
-     *
-     * 分片缺失、元数据缺失、大小/修改时间不一致时清理分片并返回 0，
-     * 避免把旧分片接到内容已变化的新文件后面。
-     */
     fun currentOffset(root: File, relativePath: String, size: Long, mtime: Long): Long {
-        val part = partFile(root, relativePath)
         val meta = readMeta(root, relativePath)
         if (meta == null) {
-            if (part.exists()) discard(root, relativePath)
+            if (partLength(root, relativePath) > 0) discard(root, relativePath)
             return 0L
         }
         if (meta.path != relativePath || meta.size != size || meta.mtime != mtime) {
             discard(root, relativePath)
             return 0L
         }
-        if (!part.isFile) return 0L
-        val length = part.length()
+        val length = partLength(root, relativePath)
         if (length > size) {
             discard(root, relativePath)
             return 0L
@@ -114,43 +147,43 @@ object PartStore {
         return length
     }
 
-    /**
-     * 把校验完成的分片改名到目标路径。
-     *
-     * 目标已存在时返回 false，绝不覆盖；原子改名不可用时退化为普通移动。
-     */
+    /** Atomic publication refuses an existing destination on every supported platform. */
     fun promote(part: File, target: File): Boolean {
-        if (target.exists()) return false
-        return try {
-            Files.move(part.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
-            true
-        } catch (_: AtomicMoveNotSupportedException) {
-            try {
-                Files.move(part.toPath(), target.toPath())
-                true
-            } catch (e: FileSystemException) {
-                if (target.exists()) false else throw e
-            }
-        } catch (e: FileSystemException) {
-            if (target.exists()) false else throw e
+        val root =
+            if (part.parentFile.name == Constants.PART_DIR) part.parentFile.parentFile
+            else part.parentFile
+        val base = root.toPath().toAbsolutePath().normalize()
+        val from = base.relativize(part.toPath().toAbsolutePath().normalize()).toString()
+        val targetPath = target.toPath().toAbsolutePath().normalize()
+        // PathUtil returns a canonical destination; the configured root may use an OS alias.
+        val targetBase = if (targetPath.startsWith(base)) base else root.toPath().toRealPath()
+        val to = targetBase.relativize(targetPath).toString()
+        return FileScope(root).use { scope ->
+            val (source, name) = scope.parent(from)
+            val (destination, newName) = scope.parent(to, true)
+            source.publish(name, destination, newName)
         }
     }
 
-    /** 服务启动时清理超过保留期的分片与元数据。 */
     @Synchronized
     fun cleanup(root: File) {
-        val dir = File(root, Constants.PART_DIR)
-        if (!dir.isDirectory) return
         val cutoff = System.currentTimeMillis() - Constants.PART_RETENTION_MS
-        val files = dir.listFiles() ?: return
-        for (file in files) {
-            if (!file.isFile) continue
-            val name = file.name.lowercase(Locale.ROOT)
-            if (!name.endsWith(".part") && !name.endsWith(".meta")) continue
-            val modified = file.lastModified()
-            if (modified > 0 && modified < cutoff) {
-                runCatching { file.delete() }
+        try {
+            FileScope(root).use { scope ->
+                val directory = scope.directory(Constants.PART_DIR)
+                for (entry in directory.entries()) {
+                    val name = entry.name.lowercase(Locale.ROOT)
+                    if (
+                        entry.regular &&
+                            (name.endsWith(".part") || name.endsWith(".meta")) &&
+                            entry.modified > 0 &&
+                            entry.modified < cutoff
+                    )
+                        runCatching { directory.delete(entry.name) }
+                }
             }
+        } catch (_: java.nio.file.NoSuchFileException) {
+            return
         }
         removeEmptyDirectory(root)
     }

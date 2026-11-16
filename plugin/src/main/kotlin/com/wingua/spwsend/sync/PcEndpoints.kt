@@ -16,7 +16,6 @@ import com.wingua.spwsend.net.PairRequest
 import com.wingua.spwsend.net.PairingProof
 import com.wingua.spwsend.net.TransferIdentity
 import java.io.File
-import java.io.FileOutputStream
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -398,10 +397,6 @@ class PcEndpoints(
                 return error(416, "RANGE_INVALID", "请求体长度与剩余字节不一致")
             }
 
-            dst.parentFile?.mkdirs()
-            val partDir = File(root, Constants.PART_DIR)
-            if (!partDir.exists()) partDir.mkdirs()
-
             if (start == 0L) PartStore.discard(root, rel)
             PartStore.writeMeta(root, rel, PartMeta(rel, size, mtime))
 
@@ -410,7 +405,7 @@ class PcEndpoints(
             progress.file(task, rel, false, size, start)
             val began = System.nanoTime()
             var received = start
-            FileOutputStream(part, start > 0).use { out ->
+            PartStore.openPart(root, rel, start > 0).use { out ->
                 val input = req.bodyStream()
                 val buffer = ByteArray(512 * 1024)
                 var remaining = size - start
@@ -426,7 +421,7 @@ class PcEndpoints(
                 out.flush()
             }
 
-            if (received != size) {
+            if (received != size || PartStore.partLength(root, rel) != size) {
                 // 数据不完整：保留分片，允许下次续传。
                 return error(409, "INCOMPLETE", "数据不完整，已保留分片")
             }
@@ -434,11 +429,11 @@ class PcEndpoints(
                 PartStore.discard(root, rel)
                 return error(409, "ALREADY_EXISTS", "目标文件已存在，已跳过")
             }
+            if (mtime > 0) runCatching { PartStore.setModified(root, rel, mtime) }
             if (!PartStore.promote(part, dst)) {
                 PartStore.discard(root, rel)
                 return error(409, "ALREADY_EXISTS", "目标文件已存在，已跳过")
             }
-            if (mtime > 0) runCatching { dst.setLastModified(mtime) }
             PartStore.discard(root, rel)
             progress.complete(task, size, false, rel)
             Diagnostics.record(
