@@ -55,7 +55,7 @@ fun PairingVerificationView(verification: PairingVerification) {
     var showText by remember(verification.combined) { mutableStateOf(false) }
     val symbols = remember { runCatching { PairingSymbols.entries to PairingSymbols.family } }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("请在另一台设备打开“核对图标”，按从左到右、从上到下的顺序核对。")
+        Text("请在另一台设备打开“核对密钥”，按从左到右、从上到下的顺序核对。")
         Spacer(Modifier.height(12.dp))
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             if (showText) {

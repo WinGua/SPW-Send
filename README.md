@@ -68,7 +68,7 @@ cd plugin && gradle plugin
 
 - **模组**：Kotlin / JVM、PF4J、[SaltUI](https://github.com/Moriafly/SaltUI) 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载。
 - **Android 端**：MySend（Flutter）。
-- **传输**：UDP 广播发现 + HTTPS，配对时验证私钥挑战签名，首次配对需确认；两端可核对 16 个图标或证书指纹，图标编码参考 [LocalSend](https://github.com/localsend/localsend)，许可见 [NOTICE](plugin/src/main/resources/pairing/NOTICE.txt)。发现广播未经认证。
+- **传输**：UDP 广播发现 + HTTPS，配对时验证私钥挑战签名，首次配对需确认；“核对密钥”支持对照两端的 16 个图标或证书指纹，图标编码参考 [LocalSend](https://github.com/localsend/localsend)，许可见 [NOTICE](plugin/src/main/resources/pairing/NOTICE.txt)。发现广播未经认证。
 - **双端互斥与进度**：按设备顺序取得双方会话锁，文件方向和字节进度按本机视角显示；手机发起时自动显示同步进度弹窗。
 - **传输优化**：连接复用、四个文件并发、512 KiB 读写缓冲。
 - 完整协议见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，端口、请求头、字段与 MySend 安卓端保持一致。

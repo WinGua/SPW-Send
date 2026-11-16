@@ -477,7 +477,7 @@ private fun DeviceRow(peer: PeerUi) {
                 )
             }
             Spacer(Modifier.width(8.dp))
-            PanelButton(onClick = { SendController.verifyPeer(peer.id) }, text = "核对图标", enabled = peer.canVerify,
+            PanelButton(onClick = { SendController.verifyPeer(peer.id) }, text = "核对密钥", enabled = peer.canVerify,
                 type = PanelButtonType.Sub)
             Spacer(Modifier.width(8.dp))
             if (!peer.connected && peer.identityKnown) {

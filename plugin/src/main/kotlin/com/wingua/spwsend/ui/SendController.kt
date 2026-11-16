@@ -682,7 +682,7 @@ object SendController {
                 )
             }
                 .getOrNull() ?: return
-        dialog = PanelDialog("核对图标", "与「${peer.name}」核对设备身份。", true, verification = verification)
+        dialog = PanelDialog("核对密钥", "与「${peer.name}」核对设备身份。", true, verification = verification)
     }
 
     private fun confirmPair(request: com.wingua.spwsend.net.PairRequest): Boolean {
