@@ -346,6 +346,9 @@ object Diagnostics {
         appendLine("=== 配置摘要 ===")
         appendLine(runCatching { configProvider?.invoke() }.getOrNull() ?: "无")
         appendLine()
+        appendLine("=== 最近操作 ===")
+        events.forEach { appendLine(it) }
+        appendLine()
         appendLine("=== 线程转储 ===")
         appendLine(buildThreadDump())
     }
