@@ -21,6 +21,9 @@ jobs:
         with:
           gradle-version: '9.8.0'
 
+      - name: 协议回归测试
+        run: gradle -p protocol-tests test --no-daemon --console=plain
+
       - name: 构建 .spmod
         working-directory: plugin
         run: gradle plugin --no-daemon

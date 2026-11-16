@@ -1,55 +1,67 @@
 package com.wingua.spwsend.sync
 
-import com.wingua.spwsend.core.Constants
 import com.wingua.spwsend.core.Config
+import com.wingua.spwsend.core.Constants
 import com.wingua.spwsend.core.Diagnostics
 import com.wingua.spwsend.core.Json
 import com.wingua.spwsend.core.PathUtil
 import com.wingua.spwsend.core.asList
 import com.wingua.spwsend.core.asMap
 import com.wingua.spwsend.core.intValue
+import com.wingua.spwsend.core.longValue
 import com.wingua.spwsend.core.str
 import com.wingua.spwsend.net.HttpRequest
 import com.wingua.spwsend.net.HttpResponse
+import com.wingua.spwsend.net.TransferIdentity
 import java.io.File
 import java.io.FileOutputStream
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * PC 端 HTTP 端点实现（协议 v2）。
  *
- * 与 MySend 2.0 完全对称：既能把本机文件提供给对端拉取，也能接收对端推送的分片。
- * 上传目标已存在时返回 `409 ALREADY_EXISTS`，绝不覆盖。
+ * 与配套更新的 MySend 双向互通；沿用 v2 路由并增加 HTTPS 与同步会话。上传目标已存在时返回 `409 ALREADY_EXISTS`，绝不覆盖。
  */
 class PcEndpoints(
+    private val identityProvider: () -> TransferIdentity,
+    private val sessions: SyncLease,
+    private val progress: RemoteProgress,
+    private val trustIdentity: (String, String) -> Unit,
     private val sessionProvider: () -> String,
     private val configProvider: () -> Config,
     private val busyProvider: () -> Boolean,
     private val onPeerDisconnected: (String) -> Unit,
     private val onPeerPaired: (String, String, String?) -> Unit,
     private val onRemoteLog: (String, Map<String, Any?>) -> Unit,
-    private val onUploadStateChanged: (Boolean) -> Unit = {}
+    private val onCancelInbound: (String) -> Unit = {},
+    private val onCancelOutbound: (String, String) -> Boolean = { _, _ -> false },
+    private val onUploadStateChanged: (Boolean) -> Unit = {},
 ) {
 
     /** token -> 对端设备 id */
     private val tokens = ConcurrentHashMap<String, String>()
 
-    /** 同一时间只允许一个入站上传，避免并发写同一目录。 */
-    private val uploading = AtomicBoolean(false)
+    /** 最多四个入站上传；同一目标文件只能有一个写入者。 */
+    private val uploading = ConcurrentHashMap.newKeySet<String>()
+    private val uploadSlots = java.util.concurrent.Semaphore(4)
 
     private val random = SecureRandom()
 
     /** 是否有入站上传正在写盘，供同步核心做并发判断。 */
     val isUploading: Boolean
-        get() = uploading.get()
+        get() = uploading.isNotEmpty()
 
     fun handle(req: HttpRequest): HttpResponse {
         return when (req.path) {
             "/v2/hello" -> hello(req)
             "/v2/pair" -> pair(req)
+            "/v2/sync/acquire",
+            "/v2/sync/renew",
+            "/v2/sync/release",
+            "/v2/sync/cancel",
+            "/v2/sync/status" -> authorized(req) { sessionControl(req) }
             "/v2/index" -> authorized(req) { index(req) }
             "/v2/file" -> authorized(req) { file(req) }
             "/v2/resume" -> authorized(req) { resume(req) }
@@ -71,8 +83,7 @@ class PcEndpoints(
     /**
      * 为本机签发一个供 [deviceId] 反向调用的 token。
      *
-     * 主动配对时把该 token 放进请求体，MySend 安卓端据此可直接调用本机，
-     * 无需等手机端再主动配对一次。
+     * 主动配对时把该 token 放进请求体，MySend 安卓端据此可直接调用本机， 无需等手机端再主动配对一次。
      */
     fun issueTokenFor(deviceId: String): String {
         forget(deviceId)
@@ -93,17 +104,21 @@ class PcEndpoints(
         return json(
             200,
             Json.obj(
+                "protocol" to "https",
+                "fingerprint" to identityProvider().fingerprint,
+                "capabilities" to listOf("sync-session", "sync-status"),
                 "proto" to Constants.PROTO,
                 "app" to Constants.APP_ID,
                 "version" to Constants.APP_VERSION,
                 "minPeer" to Constants.MIN_PEER,
                 "session" to sessionProvider(),
-                "device" to Json.obj(
-                    "id" to config.deviceId,
-                    "name" to config.deviceName,
-                    "role" to "pc"
-                )
-            )
+                "device" to
+                    Json.obj(
+                        "id" to config.deviceId,
+                        "name" to config.deviceName,
+                        "role" to "pc",
+                    ),
+            ),
         )
     }
 
@@ -118,9 +133,18 @@ class PcEndpoints(
             return error(400, "BAD_REQUEST", "角色不匹配")
         }
         val peerId = data.str("id")
-        if (peerId.isEmpty()) return error(400, "BAD_REQUEST", "设备 id 缺失")
-        if (busyProvider() || uploading.get()) return error(409, "BUSY", "已有同步任务进行中")
+        if (peerId.isEmpty() || peerId == configProvider().deviceId)
+            return error(400, "BAD_REQUEST", "设备 id 缺失")
+        if (busyProvider() || uploading.isNotEmpty()) return error(409, "BUSY", "已有同步任务进行中")
 
+        val fingerprint = data.str("fingerprint")
+        val known = configProvider().trustedFingerprints[peerId]
+        if (
+            !Regex("[a-f0-9]{64}").matches(fingerprint) || (known != null && known != fingerprint)
+        ) {
+            return error(403, "CERT_CHANGED", "对端证书身份缺失或已改变")
+        }
+        trustIdentity(peerId, fingerprint)
         // 同一设备重新配对时，旧 token 立即失效。
         forget(peerId)
         val token = newToken()
@@ -133,19 +157,21 @@ class PcEndpoints(
             Json.obj(
                 "ok" to true,
                 "token" to token,
+                "protocol" to "https",
+                "fingerprint" to identityProvider().fingerprint,
                 "session" to sessionProvider(),
-                "device" to Json.obj(
-                    "id" to config.deviceId,
-                    "name" to config.deviceName,
-                    "role" to "pc"
-                )
-            )
+                "device" to
+                    Json.obj(
+                        "id" to config.deviceId,
+                        "name" to config.deviceName,
+                        "role" to "pc",
+                    ),
+            ),
         )
     }
 
     private fun index(req: HttpRequest): HttpResponse {
         if (req.method != "GET") return error(405, "BAD_REQUEST", "方法不允许")
-        if (busyProvider() || uploading.get()) return error(409, "BUSY", "正在同步中")
         val name = req.query["name"] ?: ""
         val mapping = mappingOf(name)
             ?: return error(404, "MAPPING_NOT_FOUND", "映射「$name」不存在")
@@ -159,16 +185,16 @@ class PcEndpoints(
             Json.obj(
                 "ok" to true,
                 "name" to mapping.name,
-                "files" to files.map {
-                    Json.obj("p" to it.relativePath, "s" to it.size, "m" to it.mtimeMs)
-                }
-            )
+                "files" to
+                    files.map {
+                        Json.obj("p" to it.relativePath, "s" to it.size, "m" to it.mtimeMs)
+                    },
+            ),
         )
     }
 
     private fun file(req: HttpRequest): HttpResponse {
         if (req.method != "GET") return error(405, "BAD_REQUEST", "方法不允许")
-        if (busyProvider() || uploading.get()) return error(409, "BUSY", "正在同步中")
         val name = req.query["name"] ?: ""
         val rel = req.query["path"] ?: ""
         val mapping = mappingOf(name)
@@ -182,6 +208,9 @@ class PcEndpoints(
         if (!target.isFile) return error(404, "FILE_NOT_FOUND", "文件不存在")
 
         val total = target.length()
+        val task = req.header("X-MySend-Sync").orEmpty()
+        val began = System.nanoTime()
+        var written = 0L
         val range = req.header("range")
         if (range != null) {
             val match = Regex("""^bytes=(\d+)-$""", RegexOption.IGNORE_CASE).find(range.trim())
@@ -190,26 +219,49 @@ class PcEndpoints(
             if (start >= total) {
                 return error(416, "RANGE_INVALID", "Range 起点越界")
             }
+            progress.file(task, rel, true, total, start)
             return HttpResponse(
                 status = 206,
                 body = null,
                 contentType = "application/octet-stream",
                 file = target,
-                rangeStart = start
+                rangeStart = start,
+                onBytes = {
+                    written += it
+                    progress.bytes(task, it, rel)
+                },
+                onComplete = { ok ->
+                    if (ok) progress.complete(task, total, true, rel)
+                    Diagnostics.record(
+                        "transfer",
+                        "serve-send completed=$ok bytes=$written elapsedMs=${(System.nanoTime() - began) / 1_000_000}",
+                    )
+                },
             )
         }
+        progress.file(task, rel, true, total, 0)
         return HttpResponse(
             status = 200,
             contentType = "application/octet-stream",
-            file = target
+            file = target,
+            onBytes = {
+                written += it
+                progress.bytes(task, it, rel)
+            },
+            onComplete = { ok ->
+                if (ok) progress.complete(task, total, true, rel)
+                Diagnostics.record(
+                    "transfer",
+                    "serve-send completed=$ok bytes=$written elapsedMs=${(System.nanoTime() - began) / 1_000_000}",
+                )
+            },
         )
     }
 
     private fun resume(req: HttpRequest): HttpResponse {
         if (req.method != "GET") return error(400, "BAD_REQUEST", "方法不支持")
-        if (busyProvider() || uploading.get()) return error(409, "BUSY", "正在同步中")
-        val mapping = mappingOf(req.query["name"] ?: "")
-            ?: return error(404, "MAPPING_NOT_FOUND", "映射不存在")
+        val mapping =
+            mappingOf(req.query["name"] ?: "") ?: return error(404, "MAPPING_NOT_FOUND", "映射不存在")
         val rel = req.query["path"] ?: ""
         val size = req.query["size"]?.toLongOrNull()
         val mtime = req.query["mtime"]?.toLongOrNull()
@@ -227,7 +279,6 @@ class PcEndpoints(
     /** 批量查询续传偏移：请求体 `{name, items:[{p,s,m}]}`。 */
     private fun resumeBatch(req: HttpRequest): HttpResponse {
         if (req.method != "POST") return error(400, "BAD_REQUEST", "方法不支持")
-        if (busyProvider() || uploading.get()) return error(409, "BUSY", "正在同步中")
         val data = parseBody(req) ?: return error(400, "BAD_REQUEST", "请求体非法")
         val mapping = mappingOf(data.str("name"))
             ?: return error(404, "MAPPING_NOT_FOUND", "映射不存在")
@@ -275,7 +326,13 @@ class PcEndpoints(
             req.drainBody()
             return error(400, "PATH_INVALID", "路径非法")
         }
-        if (busyProvider() || !uploading.compareAndSet(false, true)) {
+        val key = dst.canonicalPath.lowercase(Locale.ROOT)
+        if (!uploadSlots.tryAcquire()) {
+            req.drainBody()
+            return error(409, "BUSY", "上传并发已满")
+        }
+        if (!uploading.add(key)) {
+            uploadSlots.release()
             req.drainBody()
             return error(409, "BUSY", "已有同步任务正在进行")
         }
@@ -305,16 +362,20 @@ class PcEndpoints(
             PartStore.writeMeta(root, rel, PartMeta(rel, size, mtime))
 
             val part = PartStore.partFile(root, rel)
+            val task = req.header("X-MySend-Sync").orEmpty()
+            progress.file(task, rel, false, size, start)
+            val began = System.nanoTime()
             var received = start
             FileOutputStream(part, start > 0).use { out ->
                 val input = req.bodyStream()
-                val buffer = ByteArray(64 * 1024)
+                val buffer = ByteArray(512 * 1024)
                 var remaining = size - start
                 while (remaining > 0) {
                     val toRead = minOf(buffer.size.toLong(), remaining).toInt()
                     val read = input.read(buffer, 0, toRead)
                     if (read <= 0) break
                     out.write(buffer, 0, read)
+                    progress.bytes(task, read, rel)
                     received += read
                     remaining -= read
                 }
@@ -335,6 +396,11 @@ class PcEndpoints(
             }
             if (mtime > 0) runCatching { dst.setLastModified(mtime) }
             PartStore.discard(root, rel)
+            progress.complete(task, size, false, rel)
+            Diagnostics.record(
+                "transfer",
+                "serve-receive bytes=${received - start} elapsedMs=${(System.nanoTime() - began) / 1_000_000}",
+            )
             return json(200, Json.obj("ok" to true, "size" to size))
         } catch (e: Exception) {
             Diagnostics.record("upload", "失败 path=$rel: ${e.message}")
@@ -344,8 +410,9 @@ class PcEndpoints(
                 error(500, "IO_ERROR", e.message ?: "写入失败")
             }
         } finally {
-            uploading.set(false)
-            onUploadStateChanged(false)
+            uploading.remove(key)
+            uploadSlots.release()
+            onUploadStateChanged(uploading.isNotEmpty())
         }
     }
 
@@ -369,13 +436,104 @@ class PcEndpoints(
     }
 
     private fun authorized(req: HttpRequest, block: () -> HttpResponse): HttpResponse {
-        // 协议规定除 hello/pair 外，token 缺失或错误一律 401。
-        val token = req.header(Constants.HEADER_TOKEN)
-        if (token == null || !tokens.containsKey(token)) {
-            return error(401, "UNAUTHORIZED", "缺少或错误的会话 token")
+        val token =
+            req.header(Constants.HEADER_TOKEN) ?: return error(401, "UNAUTHORIZED", "缺少会话 token")
+        val owner = tokens[token] ?: return error(401, "UNAUTHORIZED", "缺少或错误的会话 token")
+        protoMismatch(req)?.let {
+            return it
         }
-        protoMismatch(req)?.let { return it }
-        return block()
+        val protected =
+            req.path in
+                setOf(
+                    "/v2/index",
+                    "/v2/file",
+                    "/v2/upload",
+                    "/v2/resume",
+                    "/v2/resume/batch",
+                    "/v2/sync/status",
+                )
+        val task = req.header("X-MySend-Sync").orEmpty()
+        if (!protected || (req.path == "/v2/index" && task.isEmpty() && !sessions.busy()))
+            return block()
+        if (!sessions.enter(owner, task)) return error(409, "BUSY", "请先取得两端同步会话")
+        try {
+            val response = block()
+            return response.copy(
+                onComplete = { ok ->
+                    try {
+                        response.onComplete(ok)
+                    } finally {
+                        sessions.leave()
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            sessions.leave()
+            throw e
+        }
+    }
+
+    private fun sessionControl(req: HttpRequest): HttpResponse {
+        if (req.method != "POST") return error(400, "BAD_REQUEST", "需要 POST 请求")
+        val owner =
+            tokens[req.header(Constants.HEADER_TOKEN)] ?: return error(401, "UNAUTHORIZED", "会话已失效")
+        val task = req.query["task"].orEmpty()
+        if (req.path != "/v2/sync/status") {
+            if (req.contentLength != 0L) return error(400, "BAD_REQUEST", "需要空请求体")
+            val ok =
+                when (req.path) {
+                    "/v2/sync/cancel" -> {
+                        if (sessions.cancel(owner, task)) {
+                            onCancelInbound(task)
+                            progress.interrupt(task, "同步已取消")
+                            true
+                        } else onCancelOutbound(owner, task)
+                    }
+                    "/v2/sync/acquire" -> sessions.acquire(owner, task)
+                    "/v2/sync/renew" -> sessions.renew(owner, task)
+                    else -> {
+                        sessions.release(owner, task)
+                        true
+                    }
+                }
+            return if (ok) json(200, Json.obj("ok" to true)) else error(409, "BUSY", "已有同步任务进行中")
+        }
+        val id = req.header("X-MySend-Sync").orEmpty()
+        val data = parseBody(req, 16 * 1024) ?: return error(400, "BAD_REQUEST", "同步状态非法")
+        fun validCount(key: String): Boolean =
+            data[key] is Number && data.longValue(key) in 0..1_000_000_000L
+        when (data.str("phase")) {
+            "start" -> {
+                val name = data.str("name")
+                if (
+                    mappingOf(name) == null || !validCount("total") || data.str("peer").length > 128
+                )
+                    return error(400, "BAD_REQUEST", "同步计划非法")
+                progress.start(id, name, data.str("peer"), data.intValue("total"))
+            }
+            "plan" -> {
+                if (!progress.active(id) || !validCount("total"))
+                    return error(400, "BAD_REQUEST", "同步计划非法")
+                progress.plan(id, data.intValue("total"))
+            }
+            "end" -> {
+                if (
+                    !progress.active(id) ||
+                        !listOf("sent", "received", "failed").all(::validCount) ||
+                        data.str("error").length > 2000
+                )
+                    return error(400, "BAD_REQUEST", "同步结果非法")
+                progress.finish(
+                    id,
+                    sent = data.intValue("received"),
+                    received = data.intValue("sent"),
+                    failed = data.intValue("failed"),
+                    error = data.str("error").takeIf { it.isNotEmpty() },
+                )
+            }
+            else -> return error(400, "BAD_REQUEST", "同步阶段非法")
+        }
+        return json(200, Json.obj("ok" to true))
     }
 
     private fun protoMismatch(req: HttpRequest): HttpResponse? {
@@ -391,7 +549,7 @@ class PcEndpoints(
 
     private fun parseBody(
         req: HttpRequest,
-        maxBytes: Int = 2 * 1024 * 1024
+        maxBytes: Int = 2 * 1024 * 1024,
     ): Map<String, Any?>? = runCatching {
         Json.parse(String(req.bodyBytes(maxBytes), Charsets.UTF_8)).asMap()
     }.getOrNull()
@@ -418,8 +576,9 @@ class PcEndpoints(
     private fun json(status: Int, payload: Map<String, Any?>): HttpResponse =
         HttpResponse(status, Json.stringify(payload).toByteArray(Charsets.UTF_8))
 
-    private fun error(status: Int, code: String, message: String): HttpResponse = json(
-        status,
-        Json.obj("ok" to false, "code" to code, "message" to message)
-    )
+    private fun error(status: Int, code: String, message: String): HttpResponse =
+        json(
+            status,
+            Json.obj("ok" to false, "code" to code, "message" to message),
+        )
 }

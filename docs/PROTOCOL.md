@@ -1,6 +1,6 @@
 # SPW-Send / MySend 同步协议 v2
 
-状态：已定稿，v1.0 已实现
+状态：本分支安全同步扩展，尚未发布。端点仍使用 v2 路径，v1.1 明文实现不兼容。
 
 适用范围：SPW-Send 模组（PC）↔ MySend 安卓端
 
@@ -24,7 +24,7 @@
 | --- | --- |
 | 协议版本 `proto` | `2` |
 | UDP 发现端口 | `53317` |
-| HTTP 默认端口 | `53318` |
+| HTTPS 默认端口 | `53318` |
 | 广播周期 | `2s` |
 | 设备过期 | `12s` |
 | 控制请求超时 | `10s` |
@@ -34,7 +34,7 @@
 | 分片目录 | `.mysend-part` |
 | 分片保留 | `7 天` |
 
-HTTP 端口被占用时允许改用系统分配的端口，但必须在发现报文的 `port` 中声明实际端口，对端以此为准。
+HTTPS 端口被占用时允许改用系统分配的端口，但必须在发现报文的 `port` 中声明实际端口，对端以此为准。
 
 ---
 
@@ -51,6 +51,10 @@ HTTP 端口被占用时允许改用系统分配的端口，但必须在发现报
 | --- | --- | --- |
 | `GET /v2/hello` | 必须 | 必须 |
 | `POST /v2/pair` | 必须 | 必须 |
+| `POST /v2/sync/acquire` | 必须 | 必须 |
+| `POST /v2/sync/renew` | 必须 | 必须 |
+| `POST /v2/sync/release` | 必须 | 必须 |
+| `POST /v2/sync/status` | 必须 | 必须 |
 | `GET /v2/index` | 必须 | 必须 |
 | `GET /v2/file`（下载本机文件） | 必须 | 必须 |
 | `GET /v2/resume`（查询分片） | 必须 | 必须 |
@@ -67,11 +71,16 @@ HTTP 端口被占用时允许改用系统分配的端口，但必须在发现报
 
 UDP 广播到 `255.255.255.255:53317`，并对每个网卡的定向广播地址各发一份；忽略回环接口。
 
-报文（UTF-8 JSON，单行）：
+报文（UTF-8 JSON，单行；指纹与版本为示意值）：
 
 ```json
 {
   "t": "hello",
+  "protocol": "https",
+  "fingerprint": "<64 位小写十六进制 SHA-256>",
+  "capabilities": ["sync-session", "sync-status"],
+  "protocol": "https",
+  "fingerprint": "<主动配对方证书 SHA-256>",
   "proto": 2,
   "id": "9f1c...",
   "name": "DESKTOP-8K2",
@@ -80,7 +89,7 @@ UDP 广播到 `255.255.255.255:53317`，并对每个网卡的定向广播地址�
   "port": 53318,
   "session": "4b7e...",
   "app": "spw-send-mod",
-  "appVersion": "0.2.0"
+  "appVersion": "1.1"
 }
 ```
 
@@ -98,7 +107,10 @@ UDP 广播到 `255.255.255.255:53317`，并对每个网卡的定向广播地址�
 
 ## 5. 通用 HTTP 约定
 
-- 每个请求和响应都带 `Connection: close`，不复用连接
+- 强制 HTTPS，仅在 TLS 握手通过证书指纹及有效期校验后发送请求；不使用代理或重定向
+- 使用 HTTP/1.1 连接复用，响应必须提供正确的 `Content-Length`；请求不支持 `Transfer-Encoding`
+- 发现和配对报文新增 `protocol:"https"`、`fingerprint`（证书 DER 的 SHA-256 小写 hex）和能力字段
+- 索引可在空闲时单独对比；文件和续传请求必须携带 `X-MySend-Sync:<任务 id>`，且与 token 所属设备和已取得的租约同时匹配
 - 请求头 `X-MySend-Proto: 2`（`/v2/hello` 可省略）
 - 鉴权头 `X-MySend-Token: <hex>`
 - 查询参数按 UTF-8 百分号编码
@@ -120,9 +132,12 @@ GET /v2/hello
 
 ```json
 {
+  "protocol": "https",
+  "fingerprint": "<服务端证书 SHA-256>",
+  "capabilities": ["sync-session", "sync-status"],
   "proto": 2,
   "app": "mysend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "minPeer": 1,
   "session": "4b7e...",
   "device": { "id": "...", "name": "Pixel 8", "role": "android" }
@@ -143,6 +158,8 @@ Content-Type: application/json
 
 ```json
 {
+  "protocol": "https",
+  "fingerprint": "<主动配对方证书 SHA-256>",
   "proto": 2,
   "id": "9f1c...",
   "name": "DESKTOP-8K2",
@@ -151,7 +168,7 @@ Content-Type: application/json
   "port": 53318,
   "session": "4b7e...",
   "app": "spw-send-mod",
-  "appVersion": "0.2.0",
+  "appVersion": "1.1",
   "token": "c81d..."
 }
 ```
@@ -163,6 +180,8 @@ Content-Type: application/json
 ```json
 {
   "ok": true,
+  "protocol": "https",
+  "fingerprint": "<服务端证书 SHA-256>",
   "token": "a3f0...",
   "session": "4b7e...",
   "device": { "id": "9f1c...", "name": "DESKTOP-8K2", "role": "pc" }
@@ -172,7 +191,7 @@ Content-Type: application/json
 - `proto != 2` → `426 PROTO_MISMATCH`
 - 请求体 `role` 必须是对端角色（PC 收 `android`，Android 收 `pc`）
 - 已有同步任务进行中 → `409 BUSY`
-- 配对只建立本次会话，不保持长连接
+- 配对交换会话 token 与证书身份；后续同一目标的 HTTPS 连接可复用
 
 ---
 
@@ -200,7 +219,7 @@ GET /v2/index?name=<映射名>
 - 服务端必须执行同一套过滤规则：任一路径段以 `.` 或 `~$` 开头，或文件名为 `desktop.ini`、`thumbs.db`、`ehthumbs.db`
 - 不返回目录项，空目录不同步
 - 映射不存在 → `404 MAPPING_NOT_FOUND`
-- 同步进行中 → `409 BUSY`
+- 同步进行中，缺少匹配的 `X-MySend-Sync` → `409 BUSY`
 
 ---
 
@@ -314,7 +333,7 @@ Range: bytes=<n>-
 - 起点越界 → `416 RANGE_INVALID`
 - 文件不存在 → `404 FILE_NOT_FOUND`
 - 未知端点（旧版无此能力）→ `404 NOT_FOUND`
-- 同步进行中 → `409 BUSY`
+- 同步进行中，缺少匹配的 `X-MySend-Sync` → `409 BUSY`
 - 客户端以本地分片长度作为 Range 起点，完成后按 10.3 的规则原子落盘
 - 对端返回 `200` 而非 `206` 时，客户端必须从 0 覆盖分片，避免重复写入
 
@@ -390,8 +409,10 @@ POST /v2/disconnect
 
 ## 15. 安全边界
 
-- 明文 HTTP，无 TLS，仅限可信局域网
-- token 只用于阻止误连与同网随手请求，不能抵御抓包
+- 文件、索引与 token 均走 TLS；证书指纹在握手中核对，身份变化拒绝连接
+- UDP 发现尚未认证，首次配对仍需可信网络；当前未实现双向 TLS 客户端证书认证
+- 本机私钥保存在安装用户的 `~/.spw-send/identity.p12`，不打入模组、不上传；POSIX 系统只允许文件所有者读写
+- 配对成功后按设备 id 持久化指纹；普通断开保留记录，确认设备重装后手动忘记身份
 - 服务端必须做路径越界校验：规范化后必须位于映射根目录之内
 - 拒绝符号链接逃逸；Android 端需解析真实路径后再次校验
 
@@ -413,10 +434,27 @@ POST /v2/disconnect
 
 ---
 
-## 17. 旧版兼容性
+## 17. 安全会话与双端状态
 
-- 旧版 SPW-Send 安卓端使用 `54317 / 54318` 端口与 `X-SpwSend-*` 请求头，**不再兼容**。
-- 旧版 MySend（没有 `GET /v2/file`）仍可继续接收 PC 推送，也可以主动拉取 PC 文件；
-  但 PC 无法从它接收文件。发起方探测到 `404 NOT_FOUND` 时应提示用户升级到最新版 MySend，
-  而不是把每个文件都记为失败。
-- 新报文保留 `count` / `bytes` / `files`，旧版 MySend 可以继续读取日志。
+- 每次任务生成随机 id。双方均按设备 id 的字典顺序申请两个槽位，失败释放已获得的部分，避免同时发起形成交叉死锁。
+- `POST /v2/sync/acquire?task=<id>`、`renew`、`release` 均要求 token 和空请求体。冲突返回 409。
+- 每 10 秒续租，空闲租约 45 秒。请求处理和文件响应未退出前，过期或释放均不会开放新任务；迟到的旧任务释放不能释放新任务。
+- 获得两端会话后重新扫描，避免旧计划导致重复传输。发送、接收各自最多四个不同文件并发，同一目标只允许一个上传写入者。
+- `POST /v2/sync/status` 需要 token 与 `X-MySend-Sync`，JSON 请求体上限 16 KiB：
+
+```json
+{"phase":"start","name":"music","peer":"我的电脑","total":2}
+{"phase":"plan","total":2}
+{"phase":"end","sent":1,"received":1,"failed":0,"error":null}
+```
+
+`start` 在开始重新扫描前发送，`plan` 为锁内得到的新文件数；`end` 使用发起端视角，接收端交换 sent/received 显示。对端直接从自己的文件流统计进度，不需要逐文件发送进度 HTTP 请求。错误文本最多 2000 字符。异常释放或租约回收时，将尚未完成的窗口标记为中断；已完成结果不被覆盖。
+
+## 18. 升级要求
+
+v1.1 插件和旧 MySend 的明文传输不再兼容。两端都应更新到支持 HTTPS、指纹和同步会话的版本。仅有相同的 `/v2` 路径不代表兼容；禁止无声回退 HTTP。原版 MySend v2.0.0 安装包尚不具备这些扩展，需要本次更新后的配套构建。
+
+
+### 取消同步
+
+`POST /v2/sync/cancel?task=<task>` 使用已配对 token 和空请求体。任务由该对端发起时，服务端将租约标记取消并关闭对应的活动文件连接；任务由本机发起时，只接受当前配对对端与任务 ID 同时匹配的取消。未知或其他设备的任务返回 409。活动文件 I/O 退出前不会开放同步槽位。

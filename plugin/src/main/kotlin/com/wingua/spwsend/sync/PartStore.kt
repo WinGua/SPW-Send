@@ -58,6 +58,7 @@ object PartStore {
         }.getOrNull()
     }
 
+    @Synchronized
     fun writeMeta(root: File, relativePath: String, meta: PartMeta) {
         val file = metaFile(root, relativePath)
         file.parentFile?.mkdirs()
@@ -73,9 +74,18 @@ object PartStore {
         )
     }
 
+    @Synchronized
     fun discard(root: File, relativePath: String) {
         runCatching { partFile(root, relativePath).delete() }
         runCatching { metaFile(root, relativePath).delete() }
+        removeEmptyDirectory(root)
+    }
+
+    private fun removeEmptyDirectory(root: File) {
+        val dir = File(root, Constants.PART_DIR)
+        if (Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            dir.delete() // 非递归；目录非空时由操作系统拒绝删除。
+        }
     }
 
     /**
@@ -88,7 +98,7 @@ object PartStore {
         val part = partFile(root, relativePath)
         val meta = readMeta(root, relativePath)
         if (meta == null) {
-            runCatching { part.delete() }
+            if (part.exists()) discard(root, relativePath)
             return 0L
         }
         if (meta.path != relativePath || meta.size != size || meta.mtime != mtime) {
@@ -127,6 +137,7 @@ object PartStore {
     }
 
     /** 服务启动时清理超过保留期的分片与元数据。 */
+    @Synchronized
     fun cleanup(root: File) {
         val dir = File(root, Constants.PART_DIR)
         if (!dir.isDirectory) return
@@ -141,5 +152,6 @@ object PartStore {
                 runCatching { file.delete() }
             }
         }
+        removeEmptyDirectory(root)
     }
 }

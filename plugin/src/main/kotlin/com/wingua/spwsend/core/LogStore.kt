@@ -63,9 +63,7 @@ data class SyncLog(
 }
 
 /** 本地同步日志（`~/.spw-send/logs.json`），保留 7 天。 */
-class LogStore {
-
-    private val dir: File = File(System.getProperty("user.home"), ".spw-send")
+class LogStore(private val dir: File = File(System.getProperty("user.home"), ".spw-send")) {
     private val file: File = File(dir, "logs.json")
     private val entries = ArrayList<SyncLog>()
 

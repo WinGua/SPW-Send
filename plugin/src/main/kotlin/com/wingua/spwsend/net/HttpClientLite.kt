@@ -7,17 +7,49 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.net.HttpURLConnection
+import java.net.Proxy
 import java.net.URL
 import java.net.URLEncoder
+import javax.net.ssl.HttpsURLConnection
 
-/** 极简 HTTP 客户端（基于 JDK [HttpURLConnection]，每次短连接）。 */
+/** 严格固定证书指纹的 HTTPS 客户端；完整消费响应后复用连接。 */
 object HttpClientLite {
+
+    private val active =
+        java.util.concurrent.ConcurrentHashMap<String, MutableSet<HttpURLConnection>>()
+    private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun cancelTask(task: String) {
+        cancelled.add(task)
+        active[task]?.toList()?.forEach { it.disconnect() }
+    }
+
+    fun clearTask(task: String) {
+        cancelled.remove(task)
+    }
+
+    private fun register(task: String?, connection: HttpURLConnection) {
+        if (task == null) return
+        active.compute(task) { _, connections ->
+            if (cancelled.contains(task)) throw IOException("同步已取消")
+            (connections ?: java.util.concurrent.ConcurrentHashMap.newKeySet()).apply {
+                add(connection)
+            }
+        }
+    }
+
+    private fun unregister(task: String?, connection: HttpURLConnection) {
+        if (task != null)
+            active.computeIfPresent(task) { _, connections ->
+                connections.remove(connection)
+                connections.takeIf { it.isNotEmpty() }
+            }
+    }
 
     data class Result(val status: Int, val body: ByteArray, val headers: Map<String, String>) {
         fun text(): String = String(body, Charsets.UTF_8)
 
-        fun json(): Map<String, Any?> =
-            runCatching { Json.parse(text()).asMap() }.getOrDefault(emptyMap())
+        fun json(): Map<String, Any?> = Json.parse(text()).asMap()
     }
 
     /** 流式下载结果；[body] 仅在非 2xx 时保存错误 JSON。 */
@@ -25,48 +57,75 @@ object HttpClientLite {
         val status: Int,
         val body: ByteArray,
         val received: Long,
-        val headers: Map<String, String>
+        val headers: Map<String, String>,
     ) {
-        fun json(): Map<String, Any?> =
-            runCatching { Json.parse(String(body, Charsets.UTF_8)).asMap() }
-                .getOrDefault(emptyMap())
+        fun json(): Map<String, Any?> = Json.parse(String(body, Charsets.UTF_8)).asMap()
     }
 
     fun get(
         host: String,
+        fingerprint: String,
         port: Int,
         path: String,
         query: Map<String, String> = emptyMap(),
         headers: Map<String, String> = emptyMap(),
-        readTimeoutMs: Int = 10_000
-    ): Result = execute("GET", host, port, path, query, headers, null, -1, readTimeoutMs, null)
+        readTimeoutMs: Int = 10_000,
+    ): Result =
+        execute("GET", host, fingerprint, port, path, query, headers, null, -1, readTimeoutMs, null)
 
     fun post(
         host: String,
+        fingerprint: String,
         port: Int,
         path: String,
         query: Map<String, String> = emptyMap(),
         headers: Map<String, String> = emptyMap(),
         body: ByteArray? = ByteArray(0),
-        readTimeoutMs: Int = 10_000
-    ): Result = execute("POST", host, port, path, query, headers, body, -1, readTimeoutMs, null)
+        readTimeoutMs: Int = 10_000,
+    ): Result =
+        execute(
+            "POST",
+            host,
+            fingerprint,
+            port,
+            path,
+            query,
+            headers,
+            body,
+            -1,
+            readTimeoutMs,
+            null,
+        )
 
     /**
      * 流式上传固定长度请求体。
      *
-     * [length] 必须与实际写入字节数一致，否则底层连接会报错；
-     * [writer] 在连接建立后写入文件内容。
+     * [length] 必须与实际写入字节数一致，否则底层连接会报错； [writer] 在连接建立后写入文件内容。
      */
     fun postStream(
         host: String,
+        fingerprint: String,
         port: Int,
         path: String,
         query: Map<String, String> = emptyMap(),
         headers: Map<String, String> = emptyMap(),
         length: Long,
         readTimeoutMs: Int = 60_000,
-        writer: (OutputStream) -> Unit
-    ): Result = execute("POST", host, port, path, query, headers, null, length, readTimeoutMs, writer)
+        writer: (OutputStream) -> Unit,
+    ): Result =
+        execute(
+            "POST",
+            host,
+            fingerprint,
+            port,
+            path,
+            query,
+            headers,
+            null,
+            length,
+            readTimeoutMs,
+            writer,
+        )
 
     /**
      * 流式下载到 [target]。
@@ -77,6 +136,7 @@ object HttpClientLite {
      */
     fun download(
         host: String,
+        fingerprint: String,
         port: Int,
         path: String,
         query: Map<String, String> = emptyMap(),
@@ -85,17 +145,31 @@ object HttpClientLite {
         readTimeoutMs: Int = 60_000,
         target: File,
         append: Boolean,
-        checkCancelled: () -> Unit
+        checkCancelled: () -> Unit,
+        onBytes: (Int) -> Unit = {},
     ): DownloadResult {
-        val url = buildUrl(host, port, path, query)
-        val conn = url.openConnection() as HttpURLConnection
+        val url = buildUrl(host, fingerprint, port, path, query)
+        val conn = url.openConnection(Proxy.NO_PROXY) as HttpsURLConnection
+        conn.sslSocketFactory = PinnedTls.factory(fingerprint)
+        conn.hostnameVerifier =
+            javax.net.ssl.HostnameVerifier { requested, session ->
+                requested == host &&
+                    TransferIdentity.hash(
+                        session.peerCertificates.first() as java.security.cert.X509Certificate
+                    ) == fingerprint
+            }
+        val task =
+            headers["X-MySend-Sync"].takeUnless {
+                path.startsWith("/v2/sync/") || path == "/v2/log"
+            }
+        register(task, conn)
+        var reusable = false
         try {
             conn.requestMethod = "GET"
             conn.connectTimeout = 8_000
             conn.readTimeout = readTimeoutMs.coerceAtLeast(3_000)
             conn.useCaches = false
             conn.instanceFollowRedirects = false
-            conn.setRequestProperty("Connection", "close")
             conn.setRequestProperty("Accept-Encoding", "identity")
             if (rangeStart > 0) {
                 conn.setRequestProperty("Range", "bytes=$rangeStart-")
@@ -109,11 +183,13 @@ object HttpClientLite {
                 responseHeaders[key.lowercase()] = values.joinToString(", ")
             }
             if (status !in 200..299) {
-                val error = try {
-                    conn.errorStream?.use { it.readBytes() } ?: ByteArray(0)
-                } catch (_: Exception) {
-                    ByteArray(0)
-                }
+                val error =
+                    try {
+                        conn.errorStream?.use { it.readBytes() } ?: ByteArray(0)
+                    } catch (_: Exception) {
+                        ByteArray(0)
+                    }
+                reusable = true
                 return DownloadResult(status, error, 0L, responseHeaders)
             }
 
@@ -123,13 +199,14 @@ object HttpClientLite {
             val input = conn.inputStream
             try {
                 FileOutputStream(target, appendFile).use { out ->
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(512 * 1024)
                     while (true) {
                         checkCancelled()
                         val read = input.read(buffer)
                         if (read <= 0) break
                         out.write(buffer, 0, read)
                         received += read
+                        onBytes(read)
                     }
                     out.flush()
                 }
@@ -137,15 +214,18 @@ object HttpClientLite {
                 runCatching { input.close() }
             }
             val total = if (appendFile) target.length() else received
+            reusable = true
             return DownloadResult(status, ByteArray(0), total, responseHeaders)
         } finally {
-            conn.disconnect()
+            unregister(task, conn)
+            if (!reusable) conn.disconnect()
         }
     }
 
     private fun execute(
         method: String,
         host: String,
+        fingerprint: String,
         port: Int,
         path: String,
         query: Map<String, String>,
@@ -153,18 +233,31 @@ object HttpClientLite {
         body: ByteArray?,
         streamLength: Long,
         readTimeoutMs: Int,
-        writer: ((OutputStream) -> Unit)?
+        writer: ((OutputStream) -> Unit)?,
     ): Result {
-        val url = buildUrl(host, port, path, query)
-        val conn = url.openConnection() as HttpURLConnection
+        val url = buildUrl(host, fingerprint, port, path, query)
+        val conn = url.openConnection(Proxy.NO_PROXY) as HttpsURLConnection
+        conn.sslSocketFactory = PinnedTls.factory(fingerprint)
+        conn.hostnameVerifier =
+            javax.net.ssl.HostnameVerifier { requested, session ->
+                requested == host &&
+                    TransferIdentity.hash(
+                        session.peerCertificates.first() as java.security.cert.X509Certificate
+                    ) == fingerprint
+            }
+        val task =
+            headers["X-MySend-Sync"].takeUnless {
+                path.startsWith("/v2/sync/") || path == "/v2/log"
+            }
+        register(task, conn)
+        var reusable = false
         try {
             conn.requestMethod = method
             conn.connectTimeout = 8_000
             conn.readTimeout = readTimeoutMs.coerceAtLeast(3_000)
             conn.useCaches = false
             conn.instanceFollowRedirects = false
-            conn.setRequestProperty("Connection", "close")
-            // MySend 服务端会按 Accept-Encoding 压缩 JSON；显式要求明文以免需要解压。
+            // MySend 服务端会按 Accept-Encoding 压缩 JSON；显式要求未压缩 JSON 以免需要解压。
             conn.setRequestProperty("Accept-Encoding", "identity")
             for ((k, v) in headers) conn.setRequestProperty(k, v)
 
@@ -180,12 +273,13 @@ object HttpClientLite {
                 } catch (e: IOException) {
                     writeError = e
                 }
-                val status = try {
-                    conn.responseCode
-                } catch (e: IOException) {
-                    throw writeError ?: e
-                }
-                return readResult(conn, status)
+                val status =
+                    try {
+                        conn.responseCode
+                    } catch (e: IOException) {
+                        throw writeError ?: e
+                    }
+                return readResult(conn, status).also { reusable = true }
             }
 
             if (body != null) {
@@ -197,19 +291,16 @@ object HttpClientLite {
                 conn.setFixedLengthStreamingMode(0L)
             }
 
-            return readResult(conn, conn.responseCode)
+            return readResult(conn, conn.responseCode).also { reusable = true }
         } finally {
-            conn.disconnect()
+            unregister(task, conn)
+            if (!reusable) conn.disconnect()
         }
     }
 
     private fun readResult(conn: HttpURLConnection, status: Int): Result {
         val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-        val bytes = try {
-            stream?.use { it.readBytes() } ?: ByteArray(0)
-        } catch (_: Exception) {
-            ByteArray(0)
-        }
+        val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
         val headers = LinkedHashMap<String, String>()
         for ((key, values) in conn.headerFields) {
             if (key == null) continue
@@ -220,15 +311,18 @@ object HttpClientLite {
 
     private fun buildUrl(
         host: String,
+        fingerprint: String,
         port: Int,
         path: String,
-        query: Map<String, String>
+        query: Map<String, String>,
     ): URL {
-        val encoded = query.entries.joinToString("&") { (k, v) ->
-            "${encode(k)}=${encode(v)}"
-        }
+        PinnedTls.factory(fingerprint)
+        val encoded =
+            query.entries.joinToString("&") { (k, v) ->
+                "${encode(k)}=${encode(v)}"
+            }
         val suffix = if (encoded.isEmpty()) "" else "?$encoded"
-        return URL("http://$host:$port$path$suffix")
+        return java.net.URI("https://$host:$port$path$suffix").toURL()
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")

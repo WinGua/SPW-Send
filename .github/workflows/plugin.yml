@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'plugin/**'
+      - 'protocol-tests/**'
       - '.github/workflows/plugin.yml'
   workflow_dispatch:
 
@@ -23,6 +24,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.8.0'
+
+      - name: 协议回归测试
+        run: gradle -p protocol-tests test --no-daemon --console=plain
 
       - name: 构建 .spmod
         working-directory: plugin

@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/host-Salt%20Player-4B8BF5" alt="Host: Salt Player" />
 </p>
 
-> SPW-Send 是 [MySend](https://github.com/WinGua/MySend) 的定制分支，只提供电脑端模组。安卓端统一使用 MySend 官方 APK，两端遵循同一套协议 v2。
+> SPW-Send 基于 [MySend](https://github.com/WinGua/MySend)，以 Salt Player 电脑端模组的形式运行。Android 端由 MySend 提供，双方采用 HTTPS 和同步会话接口，端点沿用协议 v2。
 
 ## 组成
 
@@ -26,15 +26,15 @@
 
 ## 功能与状态
 
-模组端功能已实现，构建走 GitHub Actions：
+模组通过 GitHub Actions 构建，主要功能包括：
 
 - 运行时动态定位宿主 Compose 调用点，适配 SPW 1.19.0 / 1.19.1 及后续重新混淆的版本。
-- 提供 UDP 发现、HTTP 服务、双向目录对比、分片续传收发与 SaltUI 内嵌面板；面板材质自动跟随宿主侧栏颜色，点击左侧导航栏可关闭。
+- 提供 UDP 发现、HTTPS 服务、双向目录对比、分片续传收发与 SaltUI 内嵌面板；面板材质自动跟随宿主侧栏颜色，点击左侧导航栏可关闭。
 - 协议以 MySend v2 为基准，见 [docs/PROTOCOL.md](docs/PROTOCOL.md)；`plugin` 工作流产出 `.spmod`，`release` 工作流在打 tag 时发布 Release。
 
 ## 构建
 
-代码推送后到 Actions 页面下载 `.spmod`；也可在本地执行：
+GitHub Actions 生成 `.spmod` 构建产物。本地构建命令：
 
 ```bash
 cd plugin && gradle plugin
@@ -47,11 +47,11 @@ cd plugin && gradle plugin
 - **断点续传**：接收走 `.mysend-part` 分片，完成后原子落盘。
 - **自动忽略**：任一路径段以 `.` 或 `~$` 开头，或文件名为 `desktop.ini`、`thumbs.db`、`ehthumbs.db`。
 
-旧版 MySend 没有 `GET /v2/file`，仍可继续单向往手机同步；模组检测到后会提示升级，升级后即可双向接收。
+**协议兼容**：模组与 Android 端采用 HTTPS 和同步会话接口，与旧版明文协议不兼容。设备的「忘记」操作清除保存的指纹，用于重装或更换证书后的重新配对。
 
 ## 使用方式
 
-1. Android 端安装 [MySend 官方 APK](https://github.com/WinGua/MySend/releases)，为每组映射选择目标文件夹。
+1. Android 端安装支持 HTTPS 与同步会话的 [MySend](https://github.com/WinGua/MySend/releases)，为每组映射选择目标文件夹。
 2. 在椒盐音乐中打开 / 关闭模组面板（快捷键 `Ctrl+Alt+S` 或配置页按钮；可在宿主「设置 → 快捷键」中修改）。
 3. 模组内选择电脑上的同步文件夹，与手机端创建同名映射。
 4. 任一端点击「对比」查看「将发送 / 将接收」，再点击「同步」；模组会先推送本机新增，再接收手机新增。
@@ -62,13 +62,15 @@ cd plugin && gradle plugin
 
 - 崩溃日志只保存在本机 `~/.spw-send/diagnostics/`，不会自动上传。
 - 「导出诊断包」会把完整日志和运行状态打包成一个 zip。
-- 「问题反馈」会在浏览器打开已预填模板的 GitHub Issue 页面，把诊断包拖入附件区即可。
+- 「问题反馈」在浏览器打开预填模板的 GitHub Issue 页面，诊断包支持作为附件上传。
 
 ## 技术栈与协议
 
 - **模组**：Kotlin / JVM、PF4J、[SaltUI](https://github.com/Moriafly/SaltUI) 3.0.0-beta02（随 `.spmod` 打包）、Compose，通过 Salt Player Workshop API 加载。
 - **Android 端**：MySend（Flutter）。
-- **传输**：UDP 广播发现 + 局域网 HTTP，明文，仅建议在可信网络内使用。
+- **传输**：UDP 广播发现 + HTTPS，配对后保存证书指纹并校验设备身份；首次配对依赖未经认证的发现信息。
+- **双端互斥与进度**：按设备顺序取得双方会话锁，文件方向和字节进度按本机视角显示；手机发起时自动显示同步进度弹窗。
+- **传输优化**：连接复用、四个文件并发、512 KiB 读写缓冲。
 - 完整协议见 [docs/PROTOCOL.md](docs/PROTOCOL.md)，端口、请求头、字段与 MySend 安卓端保持一致。
 - 上游依赖、版本基线与升级检查清单见 [docs/UPSTREAM.md](docs/UPSTREAM.md)。
 
