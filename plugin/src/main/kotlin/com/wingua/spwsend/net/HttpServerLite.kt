@@ -1,6 +1,5 @@
 package com.wingua.spwsend.net
 
-import com.wingua.spwsend.core.Diagnostics
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -14,7 +13,11 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLServerSocket
+import javax.net.ssl.SSLSocket
 
 /** 服务端收到的单个 HTTP 请求。 */
 class HttpRequest(
@@ -23,7 +26,9 @@ class HttpRequest(
     val query: Map<String, String>,
     val headers: Map<String, String>,
     private val input: InputStream,
-    val contentLength: Long
+    val contentLength: Long,
+    val remoteAddress: String = "",
+    val remotePort: Int = 0,
 ) {
     private var consumed: Long = 0L
 
@@ -31,6 +36,7 @@ class HttpRequest(
 
     /** 读取请求体（最多 [maxBytes] 字节，防止恶意超大 JSON）。 */
     fun bodyBytes(maxBytes: Int = 2 * 1024 * 1024): ByteArray {
+        require(contentLength <= maxBytes) { "请求体过大" }
         if (contentLength <= 0) return ByteArray(0)
         val size = minOf(contentLength, maxBytes.toLong()).toInt()
         val buffer = ByteArray(size)
@@ -47,28 +53,35 @@ class HttpRequest(
     fun bodyText(): String = String(bodyBytes(), Charsets.UTF_8)
 
     /** 请求体的原始输入流，供大文件上传直接落盘；调用方负责按 [contentLength] 读取。 */
-    fun bodyStream(): InputStream = object : InputStream() {
-        override fun read(): Int {
-            val value = input.read()
-            if (value >= 0) consumed++
-            return value
-        }
+    fun bodyStream(): InputStream =
+        object : InputStream() {
+            override fun read(): Int {
+                if (consumed >= contentLength) return -1
+                val value = input.read()
+                if (value >= 0) consumed++
+                return value
+            }
 
-        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-            val read = input.read(buffer, offset, length)
-            if (read > 0) consumed += read
-            return read
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (consumed >= contentLength) return -1
+                val read =
+                    input.read(
+                        buffer,
+                        offset,
+                        minOf(length.toLong(), contentLength - consumed).toInt(),
+                    )
+                if (read > 0) consumed += read
+                return read
+            }
         }
-    }
 
     /**
      * 丢弃尚未读取的请求体。
      *
-     * 上传提前返回（如目标已存在）前调用，避免客户端仍在写数据时连接被重置，
-     * 从而让它能正常读到 409 响应。
+     * 上传提前返回（如目标已存在）前调用，避免客户端仍在写数据时连接被重置， 从而让它能正常读到 409 响应。
      */
     fun drainBody() {
-        val buffer = ByteArray(64 * 1024)
+        val buffer = ByteArray(512 * 1024)
         while (true) {
             val remaining = contentLength - consumed
             if (remaining <= 0) break
@@ -80,21 +93,26 @@ class HttpRequest(
 }
 
 /** 服务端返回的响应。 */
-class HttpResponse(
+data class HttpResponse(
     val status: Int,
     val body: ByteArray? = null,
     val contentType: String? = "application/json; charset=utf-8",
     val file: File? = null,
     val rangeStart: Long = 0,
-    val extraHeaders: Map<String, String> = emptyMap()
+    val extraHeaders: Map<String, String> = emptyMap(),
+    val onBytes: (Int) -> Unit = {},
+    val onComplete: (Boolean) -> Unit = {},
 )
 
 /**
- * 极简 HTTP/1.1 服务端：固定短连接、按 Content-Length 读取、支持文件与 Range 输出。
+ * HTTPS/1.1 服务端：固定长度请求体、持久连接、文件与 Range 输出。
  *
- * 仅监听局域网内的控制与文件请求，不实现 keep-alive、分块传输与 TLS。
+ * 使用每次安装的 TLS 身份；入站线程数有上限，不接受分块请求体。
  */
-class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
+class HttpServerLite(
+    private val identity: TransferIdentity,
+    private val handler: (HttpRequest) -> HttpResponse,
+) {
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -102,8 +120,24 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
     @Volatile
     private var running = false
 
-    private val executor = Executors.newFixedThreadPool(6) { runnable ->
-        Thread(runnable, "spw-send-http").apply { isDaemon = true }
+    private val executor =
+        ThreadPoolExecutor(
+            0,
+            32,
+            30L,
+            TimeUnit.SECONDS,
+            SynchronousQueue<Runnable>(),
+            java.util.concurrent.ThreadFactory { runnable ->
+                Thread(runnable, "spw-send-https").apply { isDaemon = true }
+            },
+        )
+
+    private val dataTasks = ConcurrentHashMap<Socket, String>()
+
+    fun cancelTask(task: String) {
+        for ((socket, id) in dataTasks.entries) {
+            if (id == task) runCatching { socket.close() }
+        }
     }
 
     private val activeSockets = ConcurrentHashMap.newKeySet<Socket>()
@@ -131,10 +165,14 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
         return socket.localPort
     }
 
-    private fun bindSocket(port: Int): ServerSocket = ServerSocket().apply {
-        reuseAddress = true
-        bind(InetSocketAddress(port), 50)
-    }
+    private fun bindSocket(port: Int): ServerSocket =
+        (identity.context.serverSocketFactory.createServerSocket() as SSLServerSocket).apply {
+            enabledProtocols =
+                supportedProtocols.filter { it == "TLSv1.3" || it == "TLSv1.2" }.toTypedArray()
+            needClientAuth = false
+            reuseAddress = true
+            bind(InetSocketAddress(port), 50)
+        }
 
     fun stop() {
         running = false
@@ -151,6 +189,9 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
         }
         activeSockets.clear()
         executor.shutdownNow()
+        if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
+            throw IOException("旧的传输请求尚未退出，不能重启服务")
+        }
     }
 
     private fun acceptLoop(socket: ServerSocket) {
@@ -176,64 +217,94 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
     private fun handle(socket: Socket) {
         try {
             socket.use { s ->
-                try {
-                    s.soTimeout = 60_000
-                    val input = BufferedInputStream(s.getInputStream())
-                    val requestLine = readLine(input) ?: return
-                    val parts = requestLine.split(' ').filter { it.isNotEmpty() }
-                    if (parts.size < 2) return
-                    val method = parts[0].uppercase()
-                    val target = parts[1]
-
+                s.soTimeout = 8_000
+                (s as SSLSocket).startHandshake()
+                val input = BufferedInputStream(s.getInputStream(), 512 * 1024)
+                val output = BufferedOutputStream(s.getOutputStream(), 512 * 1024)
+                while (running) {
+                    s.soTimeout = 30_000
+                    val line = readLine(input) ?: break
+                    val parts = line.split(' ')
+                    require(parts.size == 3 && parts[2] == "HTTP/1.1") { "非法 HTTP 请求" }
                     val headers = LinkedHashMap<String, String>()
+                    var headerBytes = 0
                     while (true) {
-                        val line = readLine(input) ?: break
-                        if (line.isEmpty()) break
-                        val idx = line.indexOf(':')
-                        if (idx <= 0) continue
-                        headers[line.substring(0, idx).trim().lowercase()] =
-                            line.substring(idx + 1).trim()
+                        val header = readLine(input) ?: throw IOException("请求头不完整")
+                        if (header.isEmpty()) break
+                        headerBytes += header.length
+                        require(headerBytes <= 64 * 1024) { "请求头过大" }
+                        val separator = header.indexOf(':')
+                        require(separator > 0) { "非法请求头" }
+                        val name = header.substring(0, separator).trim().lowercase()
+                        require(name != "content-length" || !headers.containsKey(name)) { "重复长度" }
+                        headers[name] = header.substring(separator + 1).trim()
                     }
-
-                    val qIndex = target.indexOf('?')
-                    val rawPath = if (qIndex >= 0) target.substring(0, qIndex) else target
-                    val rawQuery = if (qIndex >= 0) target.substring(qIndex + 1) else ""
-                    val path = runCatching { URLDecoder.decode(rawPath, "UTF-8") }
-                        .getOrDefault(rawPath)
-                    val query = parseQuery(rawQuery)
-                    val length = headers["content-length"]?.toLongOrNull() ?: 0L
-
-                    // 大文件上传可能长时间没有新数据，单独放宽读超时。
-                    if (method == "POST" && path == "/v2/upload") {
-                        runCatching { s.soTimeout = 300_000 }
-                    }
-
-                    val request = HttpRequest(method, path, query, headers, input, length)
-                    val response = try {
-                        handler(request)
-                    } catch (e: Exception) {
-                        Diagnostics.capture(e, Thread.currentThread().name, "http")
-                        HttpResponse(
-                            status = 500,
-                            body = """{"ok":false,"code":"IO_ERROR","message":"${escape(e.message ?: "内部错误")}"}"""
-                                .toByteArray(Charsets.UTF_8)
+                    require(!headers.containsKey("transfer-encoding")) { "需要固定 Content-Length" }
+                    val target = parts[1]
+                    val path = target.substringBefore('?')
+                    val length =
+                        headers["content-length"]?.let {
+                            it.toLongOrNull() ?: throw IOException("非法长度")
+                        } ?: 0L
+                    require(length >= 0)
+                    s.soTimeout = 45_000
+                    val request =
+                        HttpRequest(
+                            parts[0].uppercase(),
+                            path,
+                            parseQuery(target.substringAfter('?', "")),
+                            headers,
+                            input,
+                            length,
+                            s.inetAddress.hostAddress,
+                            s.port,
                         )
+                    if (path == "/v2/file" || path == "/v2/upload") {
+                        dataTasks[s] = request.header("X-MySend-Sync").orEmpty()
                     }
-                    writeResponse(BufferedOutputStream(s.getOutputStream()), response, method)
-                } catch (_: Exception) {
-                    // 单个连接异常不影响服务整体。
+                    val response =
+                        try {
+                            handler(request)
+                        } catch (e: Exception) {
+                            HttpResponse(
+                                500,
+                                """{"ok":false,"code":"IO_ERROR","message":"${escape(e.message ?: "内部错误")}"}"""
+                                    .toByteArray(),
+                            )
+                        }
+                    var success = false
+                    try {
+                        // 只有完整消费请求体的连接才进入下一次解析。
+                        request.drainBody()
+                        writeResponse(output, response, request.method)
+                        success = true
+                    } finally {
+                        try {
+                            response.onComplete(success)
+                        } finally {
+                            dataTasks.remove(s)
+                        }
+                    }
+                    if (headers["connection"].equals("close", ignoreCase = true)) break
                 }
             }
+        } catch (_: Exception) {
+            // TLS 失败、超时或连接中断；请求作用域负责归还会话和文件槽位。
         } finally {
+            dataTasks.remove(socket)
             activeSockets.remove(socket)
         }
     }
 
     private fun writeResponse(out: OutputStream, response: HttpResponse, method: String) {
         val head = StringBuilder(256)
-        head.append("HTTP/1.1 ").append(response.status).append(' ')
-            .append(REASONS[response.status] ?: "OK").append("\r\n")
-        head.append("Connection: close\r\n")
+        head
+            .append("HTTP/1.1 ")
+            .append(response.status)
+            .append(' ')
+            .append(REASONS[response.status] ?: "OK")
+            .append("\r\n")
+        head.append("Connection: keep-alive\r\n")
 
         val file = response.file
         if (file != null) {
@@ -270,7 +341,7 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
             val start = response.rangeStart.coerceIn(0L, file.length())
             RandomAccessFile(file, "r").use { raf ->
                 raf.seek(start)
-                copy(raf, out)
+                copy(raf, out, response.onBytes)
             }
         } else {
             response.body?.let { out.write(it) }
@@ -278,12 +349,13 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
         out.flush()
     }
 
-    private fun copy(source: RandomAccessFile, out: OutputStream) {
-        val buffer = ByteArray(64 * 1024)
+    private fun copy(source: RandomAccessFile, out: OutputStream, onBytes: (Int) -> Unit) {
+        val buffer = ByteArray(512 * 1024)
         while (true) {
             val read = source.read(buffer)
             if (read <= 0) break
             out.write(buffer, 0, read)
+            onBytes(read)
         }
     }
 
@@ -292,7 +364,10 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
         var b = input.read()
         if (b < 0) return null
         while (b >= 0 && b != '\n'.code) {
-            if (b != '\r'.code && buffer.size() < 8192) buffer.write(b)
+            if (b != '\r'.code) {
+                require(buffer.size() < 8192) { "请求行过长" }
+                buffer.write(b)
+            }
             b = input.read()
         }
         return buffer.toString("UTF-8")
@@ -315,34 +390,36 @@ class HttpServerLite(private val handler: (HttpRequest) -> HttpResponse) {
     private fun sanitize(value: String): String =
         value.replace("\r", "").replace("\n", "")
 
-    private fun escape(value: String): String = buildString(value.length + 8) {
-        for (c in value) {
-            when (c) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> if (c.code < 0x20) append(' ') else append(c)
+    private fun escape(value: String): String =
+        buildString(value.length + 8) {
+            for (c in value) {
+                when (c) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> if (c.code < 0x20) append(' ') else append(c)
+                }
             }
         }
-    }
 
     companion object {
-        private val REASONS = mapOf(
-            200 to "OK",
-            204 to "No Content",
-            206 to "Partial Content",
-            400 to "Bad Request",
-            401 to "Unauthorized",
-            403 to "Forbidden",
-            404 to "Not Found",
-            405 to "Method Not Allowed",
-            409 to "Conflict",
-            416 to "Range Not Satisfiable",
-            426 to "Upgrade Required",
-            500 to "Internal Server Error",
-            507 to "Insufficient Storage"
-        )
+        private val REASONS =
+            mapOf(
+                200 to "OK",
+                204 to "No Content",
+                206 to "Partial Content",
+                400 to "Bad Request",
+                401 to "Unauthorized",
+                403 to "Forbidden",
+                404 to "Not Found",
+                405 to "Method Not Allowed",
+                409 to "Conflict",
+                416 to "Range Not Satisfiable",
+                426 to "Upgrade Required",
+                500 to "Internal Server Error",
+                507 to "Insufficient Storage",
+            )
     }
 }

@@ -1,0 +1,13 @@
+Pairing verification symbols
+
+LocalSend fingerprint alphabet and comparison encoding
+Copyright 2022-2026 Tien Do Nam
+Source: https://github.com/localsend/localsend/blob/2e7ef1972b0b4e210608ec77ef5fad334f798f7e/app/lib/util/fingerprint_alphabet.dart
+License: Apache-2.0 (see LICENSE-APACHE)
+Changes: ported comparison encoding to Dart/Kotlin; shared symbol table and font subset.
+
+Material Icons font, distributed with Flutter 3.24.5
+Copyright 2019 Google LLC. All Rights Reserved.
+Source: https://github.com/flutter/flutter/tree/3.24.5
+License and warranty disclaimer: https://creativecommons.org/licenses/by/4.0/legalcode
+Changes: subset to 260 symbols and renamed MySendPairingSymbols.

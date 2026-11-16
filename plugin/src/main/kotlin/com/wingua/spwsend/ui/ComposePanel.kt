@@ -477,6 +477,14 @@ private fun DeviceRow(peer: PeerUi) {
                 )
             }
             Spacer(Modifier.width(8.dp))
+            PanelButton(onClick = { SendController.verifyPeer(peer.id) }, text = "核对密钥", enabled = peer.canVerify,
+                type = PanelButtonType.Sub)
+            Spacer(Modifier.width(8.dp))
+            if (!peer.connected && peer.identityKnown) {
+                PanelButton(onClick = { SendController.forgetIdentity(peer.id) }, text = "忘记",
+                    enabled = !SendController.actionLocked, type = PanelButtonType.Sub)
+                Spacer(Modifier.width(8.dp))
+            }
             PanelButton(
                 onClick = { SendController.toggleConnection(peer.id) },
                 text = if (peer.connected) "断开" else "连接",
@@ -895,12 +903,20 @@ private fun MessagePanelCard(dialog: PanelDialog) {
                 dialog.title,
                 style = PanelMain,
                 fontWeight = FontWeight.Bold,
-                color = if (dialog.success) successColor() else errorColor()
+                color = if (dialog.running || dialog.verification != null) panelColors.text else if (dialog.success) successColor() else errorColor()
             )
             Spacer(Modifier.height(8.dp))
             PanelText(dialog.message, style = PanelSub, color = panelColors.subText)
+            dialog.verification?.let {
+                Spacer(Modifier.height(12.dp))
+                PairingVerificationView(it)
+            }
+            if (dialog.running) {
+                Spacer(Modifier.height(10.dp))
+                ProgressBar(SendController.progress)
+            }
             Spacer(Modifier.height(18.dp))
-            Row(
+            if (!dialog.running) Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
@@ -917,7 +933,7 @@ private fun MessagePanelCard(dialog: PanelDialog) {
                     PanelButton(
                         onClick = { SendController.confirmDialog() },
                         text = dialog.confirmText,
-                        type = PanelButtonType.Danger
+                        type = if (dialog.verification != null) PanelButtonType.Highlight else PanelButtonType.Danger
                     )
                 } else {
                     PanelButton(

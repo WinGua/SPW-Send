@@ -27,7 +27,9 @@ data class PeerUi(
     val id: String,
     val name: String,
     val connected: Boolean,
-    val appVersion: String
+    val appVersion: String,
+    val identityKnown: Boolean = false,
+    val canVerify: Boolean = false,
 )
 
 /** 页面内弹窗。 */
@@ -37,7 +39,10 @@ data class PanelDialog(
     val success: Boolean,
     val confirmText: String = "关闭",
     val showCancel: Boolean = false,
-    val onConfirm: (() -> Unit)? = null
+    val onConfirm: (() -> Unit)? = null,
+    val running: Boolean = false,
+    val onCancel: (() -> Unit)? = null,
+    val verification: com.wingua.spwsend.net.PairingVerification? = null,
 )
 
 /** 名称输入的用途。 */
@@ -50,7 +55,7 @@ data class NameInput(
     val path: String,
     val value: String,
     val mode: NameInputMode = NameInputMode.Mapping,
-    val error: String? = null
+    val error: String? = null,
 )
 
 /**
@@ -74,6 +79,14 @@ object SendController {
     private var cancelRequested = false
 
     private var listenerAttached = false
+    private val pairDecision =
+        java.util.concurrent.atomic.AtomicReference<
+            java.util.concurrent.CompletableFuture<Boolean>?
+        >(
+            null
+        )
+    private var remoteTask: String? = null
+    private var remoteFinished = false
 
     var serviceRunning by mutableStateOf(false)
         private set
@@ -152,6 +165,7 @@ object SendController {
             listenerAttached = true
             core.onChanged = { post { refreshFromCore() } }
         }
+        core.onPairRequest = ::confirmPair
         runCatching { core.start() }
             .onFailure { Diagnostics.record("service", "启动异常: ${it.message}") }
         refreshFromCore()
@@ -160,7 +174,7 @@ object SendController {
         status = core.startupError ?: if (core.isRunning) "服务已就绪" else "服务未启动"
         Diagnostics.record(
             "service",
-            "启动 运行=${core.isRunning} 端口=${core.actualPort} 错误=${core.startupError ?: "无"}"
+            "启动 运行=${core.isRunning} 端口=${core.actualPort} 错误=${core.startupError ?: "无"}",
         )
     }
 
@@ -169,6 +183,8 @@ object SendController {
         Diagnostics.record("service", "关闭")
         listenerAttached = false
         cancelRequested = true
+        pairDecision.getAndSet(null)?.complete(false)
+        core.onPairRequest = null
         core.onChanged = null
         runCatching { core.stop() }
             .onFailure { Diagnostics.record("service", "关闭异常: ${it.message}") }
@@ -207,14 +223,16 @@ object SendController {
      * 有二级弹窗时先收起弹窗；任务进行中由 [requestClose] 给出提示，不打断同步。
      */
     fun onSidebarClick() {
+        if (dialog?.running == true) return
         when {
             nameInput != null -> nameInput = null
-            dialog != null -> dialog = null
+            dialog != null -> cancelDialog()
             else -> requestClose()
         }
     }
 
     private fun stopCore() {
+        pairDecision.getAndSet(null)?.complete(false)
         runCatching { core.stop() }
         serviceRunning = false
         port = 0
@@ -270,7 +288,7 @@ object SendController {
                         status = "连接失败"
                         dialog = PanelDialog(
                             title = "连接失败",
-                            message = "无法连接「${peer.name}」。请确认手机端已打开 MySend，且与电脑处于同一局域网。",
+                            message = "无法连接「${peer.name}」。请确认两端均为新版、手机端已打开 MySend 且网络相通。若确认手机已重装或更换证书，请先忘记设备再连接。",
                             success = false
                         )
                     }
@@ -278,6 +296,12 @@ object SendController {
                 }
             }
         }
+    }
+
+    fun forgetIdentity(id: String) {
+        if (actionLocked || core.busy) return
+        dialog = PanelDialog("忘记设备身份", "仅在确认手机已重装或换证书后使用。下次连接将重新信任该设备身份。",
+            false, confirmText = "忘记", showCancel = true, onConfirm = { core.forgetIdentity(id); refreshFromCore() })
     }
 
     fun compareNow() {
@@ -314,7 +338,7 @@ object SendController {
                     progress = if (result.isEmpty) 1f else 0f
                     Diagnostics.record(
                         "compare",
-                        "完成 映射=${result.mapping.name} 发送=${result.toSend.size} 接收=${result.toReceive.size}"
+                        "完成 映射=${result.mapping.name} 发送=${result.toSend.size} 接收=${result.toReceive.size}",
                     )
                     status = when {
                         result.isEmpty -> "两端文件一致"
@@ -371,7 +395,7 @@ object SendController {
         status = "正在同步 0/$total"
         Diagnostics.record(
             "sync",
-            "开始 映射=${current.mapping.name} 发送=${current.toSend.size} 接收=${current.toReceive.size}"
+            "开始 映射=${current.mapping.name} 发送=${current.toSend.size} 接收=${current.toReceive.size}",
         )
         executor.execute {
             var outcome: SyncOutcome? = null
@@ -382,7 +406,7 @@ object SendController {
                     pending = current,
                     onProgress = { processed, totalCount, path, direction ->
                         post {
-                            progress = if (totalCount == 0) 0f else processed.toFloat() / totalCount
+                            progress = core.outboundProgress.snapshot?.fraction ?: if (totalCount == 0) 0f else processed.toFloat() / totalCount
                             val label = if (direction == SyncDirection.Send) "发送" else "接收"
                             status = "$label $processed/$totalCount · ${shortPath(path, 40)}"
                         }
@@ -396,7 +420,9 @@ object SendController {
             post {
                 syncActive = false
                 pending = null
-                progress = 1f
+                progress = if (outcome?.cancelled == true || failure != null) {
+                    core.outboundProgress.snapshot?.fraction ?: progress
+                } else 1f
                 refreshLogs()
                 refreshFromCore()
                 resultText = "同步已完成，点击「对比」可重新检查新增文件。"
@@ -407,12 +433,16 @@ object SendController {
                     Diagnostics.record(
                         "sync",
                         "结束 发送=${result.log.sentCount} 接收=${result.log.receivedCount} " +
-                            "失败=${result.log.failed} 取消=${result.cancelled}"
+                            "失败=${result.log.failed} 取消=${result.cancelled}",
                     )
                 } else if (error != null) {
                     Diagnostics.record("sync", "失败: ${error.message}")
                 }
+                if (core.remoteProgress.snapshot?.finished == false) { refreshFromCore(); return@post }
                 dialog = when {
+                    error is com.wingua.spwsend.sync.CancelledException -> PanelDialog(
+                        "已取消同步", "传输已停止，分片已保留，可重新同步。", false
+                    )
                     error != null -> PanelDialog("同步失败", error.message ?: "未知错误", false)
                     result == null -> PanelDialog("同步失败", "未获取同步结果。", false)
                     result.cancelled -> PanelDialog(
@@ -450,6 +480,7 @@ object SendController {
         if (!syncActive) return
         Diagnostics.record("sync", "请求取消")
         cancelRequested = true
+        core.cancelTransfers()
         status = "正在取消…"
     }
 
@@ -624,27 +655,81 @@ object SendController {
 
     fun clearLogs() {
         if (logs.isEmpty()) return
-        dialog = PanelDialog(
-            title = "清除同步日志",
-            message = "确定清除本机全部同步日志吗？已同步的文件不会受影响。",
-            success = false,
-            confirmText = "清除",
-            showCancel = true,
-            onConfirm = {
-                logStore.clear()
-                Diagnostics.record("log", "清除同步日志")
-                refreshLogs()
-                status = "已清除同步日志"
+        dialog =
+            PanelDialog(
+                title = "清除同步日志",
+                message = "确定清除本机全部同步日志吗？已同步的文件不会受影响。",
+                success = false,
+                confirmText = "清除",
+                showCancel = true,
+                onConfirm = {
+                    logStore.clear()
+                    Diagnostics.record("log", "清除同步日志")
+                    refreshLogs()
+                    status = "已清除同步日志"
+                },
+            )
+    }
+
+    fun verifyPeer(id: String) {
+        if (dialog != null) return
+        val peer = core.peers().firstOrNull { it.id == id } ?: return
+        val verification =
+            runCatching {
+                com.wingua.spwsend.net.PairingVerification.of(
+                    core.identity.fingerprint,
+                    peer.fingerprint,
+                )
             }
-        )
+                .getOrNull() ?: return
+        dialog = PanelDialog("核对密钥", "与「${peer.name}」核对设备身份。", true, verification = verification)
+    }
+
+    private fun confirmPair(request: com.wingua.spwsend.net.PairRequest): Boolean {
+        val decision = java.util.concurrent.CompletableFuture<Boolean>()
+        if (!pairDecision.compareAndSet(null, decision)) return false
+        val prompt =
+            PanelDialog(
+                "允许设备配对",
+                "设备「${request.name}」请求访问同步目录。\n地址：${request.address}\n证书指纹：${request.fingerprint}",
+                false,
+                confirmText = "图标一致，允许配对",
+                showCancel = true,
+                verification =
+                    com.wingua.spwsend.net.PairingVerification.of(
+                        core.identity.fingerprint,
+                        request.fingerprint,
+                    ),
+                onConfirm = { decision.complete(true) },
+                onCancel = { decision.complete(false) },
+            )
+        post {
+            if (dialog != null || syncActive || compareActive) decision.complete(false)
+            else {
+                SendPanelState.open()
+                dialog = prompt
+            }
+        }
+        return try {
+            decision.get(110, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            false
+        } finally {
+            pairDecision.compareAndSet(decision, null)
+            post { if (dialog === prompt) dialog = null }
+        }
     }
 
     fun cancelDialog() {
+        if (dialog?.running == true) return
+        val previous = dialog
         dialog = null
+        previous?.onCancel?.invoke()
     }
 
     fun confirmDialog() {
         val current = dialog ?: return
+        if (current.running) return
         dialog = null
         current.onConfirm?.invoke()
     }
@@ -659,14 +744,17 @@ object SendController {
             selectedMappingId = config.mappings.firstOrNull()?.id
         }
 
-        val snapshot = core.peers().map { peer ->
-            PeerUi(
-                id = peer.id,
-                name = peer.name,
-                connected = core.isConnected(peer.id),
-                appVersion = peer.appVersion
-            )
-        }
+        val snapshot =
+            core.peers().map { peer ->
+                PeerUi(
+                    id = peer.id,
+                    name = peer.name,
+                    connected = core.isConnected(peer.id),
+                    appVersion = peer.appVersion,
+                    identityKnown = core.hasTrustedIdentity(peer.id),
+                    canVerify = Regex("[a-f0-9]{64}").matches(peer.fingerprint),
+                )
+            }
         peers = snapshot
         serviceRunning = core.isRunning
         port = core.actualPort
@@ -684,6 +772,38 @@ object SendController {
         val connected = snapshot.filter { it.connected }
         if (selectedPeerId == null || connected.none { it.id == selectedPeerId }) {
             selectedPeerId = connected.firstOrNull()?.id
+        }
+        if (syncActive) core.outboundProgress.snapshot?.let { active ->
+            progress = active.fraction
+            status = "${if (active.sending) "发送" else "接收"} ${shortPath(active.current, 30)} · ${PathUtil.formatBytes(active.speed.toLong())}/s"
+        }
+        val remote = core.remoteProgress.snapshot
+        if (remote != null && (remote.task != remoteTask || !remoteFinished)) {
+            remoteTask = remote.task
+            remoteFinished = remote.finished
+            inboundActive = !remote.finished
+            progress = remote.fraction
+            val title = when {
+                !remote.finished && remote.preparing -> "准备同步"
+                !remote.finished -> "同步中"
+                remote.error != null -> "同步中断"
+                remote.failed > 0 -> "同步完成（部分失败）"
+                else -> "同步完成"
+            }
+            val detail = buildString {
+                appendLine("来自「${remote.peer}」 · ${remote.mapping}")
+                appendLine("${remote.done}/${remote.total} 个文件 · 已发送 ${remote.sent} · 已接收 ${remote.received}")
+                if (remote.current.isNotEmpty() && !remote.finished) {
+                    appendLine("当前：${if (remote.sending) "发送" else "接收"} ${remote.current.substringAfterLast('/')}")
+                    appendLine("速度 ${PathUtil.formatBytes(remote.speed.toLong())}/s")
+                }
+                remote.error?.let { appendLine(it) }
+                if (remote.failed > 0) appendLine("${remote.failed} 个文件失败，请重新对比后重试")
+            }.trim()
+            status = title
+            if (!remote.finished) SendPanelState.open()
+            dialog = PanelDialog(title, detail, remote.finished && remote.error == null && remote.failed == 0,
+                running = !remote.finished)
         }
     }
 

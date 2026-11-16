@@ -21,7 +21,8 @@ class Peer(
     @Volatile var port: Int,
     @Volatile var appVersion: String,
     @Volatile var session: String,
-    @Volatile var lastSeen: Long
+    @Volatile var lastSeen: Long,
+    @Volatile var fingerprint: String = ""
 )
 
 /**
@@ -35,6 +36,7 @@ class Discovery(
     private val deviceId: String,
     private val deviceNameProvider: () -> String,
     private val session: String,
+    private val fingerprintProvider: () -> String,
     private val portProvider: () -> Int,
     private val onChanged: () -> Unit,
     private val onPeerSessionChanged: (String) -> Unit = {}
@@ -143,10 +145,11 @@ class Discovery(
 
         val existing = peers[id]
         if (existing == null) {
-            peers[id] = Peer(id, name, address, port, appVersion, peerSession, now)
+            peers[id] = Peer(id, name, address, port, appVersion, peerSession, now, data.str("fingerprint"))
             onChanged()
         } else {
             val sessionChanged = peerSession.isNotEmpty() && existing.session != peerSession
+            existing.fingerprint = data.str("fingerprint")
             existing.name = name
             existing.address = address
             existing.port = port
@@ -184,6 +187,9 @@ class Discovery(
         val payload = Json.stringify(
             Json.obj(
                 "t" to "hello",
+                "protocol" to "https",
+                "fingerprint" to fingerprintProvider(),
+                "capabilities" to listOf("sync-session", "sync-status"),
                 "proto" to Constants.PROTO,
                 "id" to deviceId,
                 "name" to deviceNameProvider(),
